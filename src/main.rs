@@ -21,7 +21,7 @@ struct MyApp {
 impl Default for MyApp {
     fn default() -> Self {
         Self {
-            bottom_panel_height: 250.0, 
+            bottom_panel_height: 250.0,
         }
     }
 }
@@ -29,12 +29,32 @@ impl Default for MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("top_bar")
-            .frame(egui::Frame::default().fill(egui::Color32::from_rgb(15, 15, 15)))
+            .frame(
+                egui::Frame::default()
+                    .fill(egui::Color32::from_rgb(15, 15, 15))
+                    .inner_margin(egui::Margin::symmetric(4.0, 0.0)),
+            )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Navbar");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label("User Menu");
+                egui::menu::bar(ui, |ui| {
+                    ui.menu_button("File", |ui| {
+                        if ui.button("New").clicked() {
+                            println!("New");
+                        }
+                        if ui.button("Open").clicked() {
+                            println!("Open");
+                        }
+                        if ui.button("Exit").clicked() {
+                            println!("Exit");
+                        }
+                    });
+
+                    ui.menu_button("Edit", |ui| {
+                        if ui.button("Undo").clicked() {
+                            println!("Undo");
+                        }
+                        if ui.button("Redo").clicked() {
+                            println!("Redo");
+                        }
                     });
                 });
             });
@@ -56,7 +76,7 @@ impl eframe::App for MyApp {
             .frame(
                 egui::Frame::default()
                     .fill(egui::Color32::from_rgb(25, 25, 25))
-                    .inner_margin(egui::Margin::symmetric(10.0, 10.0)), 
+                    .inner_margin(egui::Margin::symmetric(10.0, 10.0)),
             )
             .show(ctx, |ui| {
                 ui.heading("Properties");
@@ -67,7 +87,7 @@ impl eframe::App for MyApp {
             .frame(
                 egui::Frame::default()
                     .fill(egui::Color32::from_rgb(35, 35, 35))
-                    .inner_margin(egui::Margin::symmetric(10.0, 10.0)), 
+                    .inner_margin(egui::Margin::symmetric(10.0, 10.0)),
             )
             .show(ctx, |ui| {
                 ui.heading("Scene");
@@ -79,10 +99,10 @@ impl eframe::App for MyApp {
             .frame(
                 egui::Frame::default()
                     .fill(egui::Color32::from_rgb(25, 25, 25))
-                    .inner_margin(egui::Margin::symmetric(10.0, 10.0)), 
+                    .inner_margin(egui::Margin::symmetric(10.0, 10.0)),
             )
             .min_height(50.0)
-            .default_height(self.bottom_panel_height) 
+            .default_height(self.bottom_panel_height)
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
                     ui.label("The assets and directories navigation will be centered here.");
