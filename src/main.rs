@@ -1,5 +1,7 @@
 use eframe::egui;
 use eframe::{run_native, NativeOptions};
+use std::fs;
+use std::path::PathBuf;
 
 fn main() {
     let native_options = NativeOptions {
@@ -14,14 +16,23 @@ fn main() {
     );
 }
 
+enum ViewMode {
+    List,
+    Icons,
+}
+
 struct MyApp {
+    current_dir: PathBuf,
     bottom_panel_height: f32,
+    view_mode: ViewMode,
 }
 
 impl Default for MyApp {
     fn default() -> Self {
         Self {
-            bottom_panel_height: 250.0,
+            current_dir: std::env::current_dir().unwrap(),
+            bottom_panel_height: 150.0,
+            view_mode: ViewMode::List,
         }
     }
 }
@@ -104,9 +115,86 @@ impl eframe::App for MyApp {
             .min_height(50.0)
             .default_height(self.bottom_panel_height)
             .show(ctx, |ui| {
-                ui.vertical(|ui| {
-                    ui.label("The assets and directories navigation will be centered here.");
+                ui.heading("Asset Browser");
+                ui.separator();
+
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        if let Some(parent_dir) = self.current_dir.parent() {
+                            if ui.button("⬅️ Back").clicked() {
+                                self.current_dir = parent_dir.to_path_buf();
+                            }
+                        }
+
+                        if ui
+                            .button(match self.view_mode {
+                                ViewMode::List => "Switch to Icons",
+                                ViewMode::Icons => "Switch to List",
+                            })
+                            .clicked()
+                        {
+                            self.view_mode = match self.view_mode {
+                                ViewMode::List => ViewMode::Icons,
+                                ViewMode::Icons => ViewMode::List,
+                            };
+                        }
+                    });
                 });
+
+                ui.separator();
+
+                if let Ok(entries) = fs::read_dir(&self.current_dir) {
+                    let entries: Vec<_> = entries
+                        .flatten()
+                        .filter(|entry| {
+                            let binding = entry.file_name();
+                            let file_name = binding.to_string_lossy();
+                            !file_name.starts_with('.') 
+                                && file_name != "target"
+                        })
+                        .collect();
+
+                    match self.view_mode {
+                        ViewMode::List => {
+                            for entry in entries {
+                                let path = entry.path();
+                                let name = entry.file_name().to_string_lossy().to_string();
+
+                                if path.is_dir() {
+                                    if ui.button(format!("📁 {}", name)).clicked() {
+                                        self.current_dir = path;
+                                    }
+                                } else {
+                                    ui.label(format!("📄 {}", name));
+                                }
+                            }
+                        }
+                        ViewMode::Icons => {
+                            ui.horizontal_wrapped(|ui| {
+                                for entry in entries {
+                                    let path = entry.path();
+                                    let name = entry.file_name().to_string_lossy().to_string();
+
+                                    let label = if path.is_dir() {
+                                        format!("📁 {}", name)
+                                    } else {
+                                        format!("📄 {}", name)
+                                    };
+
+                                    if ui.button(&label).clicked() {
+                                        if path.is_dir() {
+                                            self.current_dir = path;
+                                        } else {
+                                            if let Err(err) = open::that(&path) {
+                                                eprintln!("Failed to open file: {}", err);
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
             });
     }
 }
