@@ -1,18 +1,18 @@
-use eframe::egui;
+use eframe::egui::{self, ViewportBuilder};
 use eframe::{run_native, NativeOptions};
 use std::fs;
 use std::path::PathBuf;
 
 fn main() {
     let native_options = NativeOptions {
-        initial_window_size: Some(egui::vec2(800.0, 600.0)),
+        viewport: ViewportBuilder::default(),
         ..Default::default()
     };
 
     let _ = run_native(
         "3D Engine GUI",
         native_options,
-        Box::new(|_cc| Box::new(MyApp::default())),
+        Box::new(|_cc| Ok(Box::new(MyApp::default()))),
     );
 }
 
