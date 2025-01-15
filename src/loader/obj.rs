@@ -21,10 +21,52 @@ pub type Normal = Vector3<f32>;
 pub type UV = Point2<f32>;
 pub type Words<'a> = Filter<Split<'a, fn(char) -> bool>, fn(&&str) -> bool>;
 
-pub fn split_words(s: &str) -> impl Iterator<Item = &str> {
-    s.split_whitespace()
+pub fn split_words(s: &str) -> Words {
+    fn is_not_empty(s: &&str) -> bool {
+        !s.is_empty()
+    }
+    let is_not_empty: fn(&&str) -> bool = is_not_empty; 
+
+    fn is_whitespace(c: char) -> bool {
+        c.is_whitespace()
+    }
+    let is_whitespace: fn(char) -> bool = is_whitespace;
+
+    s.split(is_whitespace).filter(is_not_empty)
 }
 
+fn error(line: usize, err: &str) -> ! {
+    panic!("At line {}: {}", line, err)
+}
+
+fn warn(line: usize, err: &str) {
+    println!("At line {}: {}", line, err)
+}
+
+fn parse_mtllib<'a>(
+    l: usize,
+    ws: Words<'a>,
+    mtl_base_dir: &Path,
+    mtllib: &mut HashMap<String, MtlMaterial>,
+) {
+    let filename: Vec<&'a str> = ws.collect();
+    let filename = filename.join(" ");
+
+    let mut path = PathBuf::new();
+    path.push(mtl_base_dir);
+    path.push(filename);
+
+    let ms = mtl::parse_file(&path);
+
+    match ms {
+        Ok(ms) => {
+            for m in ms.into_iter() {
+                let _ = mtllib.insert(m.name.to_string(), m);
+            }
+        }
+        Err(err) => warn(l, &format!("{}", err)[..]),
+    }
+}
 
 fn parse_v_or_vn(l: usize, mut ws: Words) -> Vector3<f32> {
     let sx = ws
