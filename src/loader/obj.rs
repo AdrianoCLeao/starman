@@ -1,11 +1,15 @@
-use std::fs::File;
-use std::path::PathBuf;
-use std::{iter::Filter, path::Path};
-use std::str::Split;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
-use std::str::FromStr;
+use std::fs::File;
+use std::io::Read;
 use std::io::Result as IoResult;
+use std::iter::repeat;
+use std::iter::Filter;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::str::Split;
+use std::sync::{Arc, RwLock};
+
 use nalgebra::{Point2, Point3, Vector3};
 use ncollide3d::procedural::{IndexBuffer, TriMesh};
 use num_traits::{Bounded, Zero};
@@ -13,7 +17,7 @@ use num_traits::{Bounded, Zero};
 use crate::loader::mtl;
 use crate::loader::mtl::MtlMaterial;
 use crate::resource::vertex_index::VertexIndex;
-use crate::resource::gpu_vector::GPUVec;
+use crate::resource::gpu_vector::{AllocationType, BufferType, GPUVec};
 use crate::resource::mesh::{self, Mesh};
 
 pub type Coord = Point3<f32>;
@@ -41,6 +45,57 @@ fn error(line: usize, err: &str) -> ! {
 
 fn warn(line: usize, err: &str) {
     println!("At line {}: {}", line, err)
+}
+
+fn parse_usemtl<'a>(
+    l: usize,
+    ws: Words<'a>,
+    curr_group: usize,
+    mtllib: &HashMap<String, MtlMaterial>,
+    group2mtl: &mut HashMap<usize, MtlMaterial>,
+    groups: &mut HashMap<String, usize>,
+    groups_ids: &mut Vec<Vec<Point3<VertexIndex>>>,
+    curr_mtl: &mut Option<MtlMaterial>,
+) -> usize {
+    let mname: Vec<&'a str> = ws.collect();
+    let mname = mname.join(" ");
+    let none = "None";
+    if mname[..] != none[..] {
+        match mtllib.get(&mname) {
+            None => {
+                *curr_mtl = None;
+                warn(l, &format!("could not find the material {}", mname)[..]);
+
+                curr_group
+            }
+            Some(m) => {
+                if !group2mtl.contains_key(&curr_group) {
+                    let _ = group2mtl.insert(curr_group, m.clone());
+                    *curr_mtl = Some(m.clone());
+                    curr_group
+                } else {
+                    let mut g = curr_group.to_string();
+                    g.push_str(&mname[..]);
+
+                    let new_group = parse_g(
+                        l,
+                        split_words(&g[..]),
+                        "auto_generated_group_",
+                        groups,
+                        groups_ids,
+                    );
+
+                    let _ = group2mtl.insert(new_group, m.clone());
+                    *curr_mtl = Some(m.clone());
+
+                    new_group
+                }
+            }
+        }
+    } else {
+        *curr_mtl = None;
+        curr_group
+    }
 }
 
 fn parse_mtllib<'a>(
@@ -217,5 +272,105 @@ fn parse_g<'a>(
             *entry.insert(val)
         }
     }
+}
+
+fn reformat(
+    coords: Vec<Coord>,
+    normals: Option<Vec<Normal>>,
+    uvs: Option<Vec<UV>>,
+    groups_ids: Vec<Vec<Point3<VertexIndex>>>,
+    groups: HashMap<String, usize>,
+    group2mtl: HashMap<usize, MtlMaterial>,
+) -> Vec<(String, Mesh, Option<MtlMaterial>)> {
+    let mut vt2id: HashMap<Point3<VertexIndex>, VertexIndex> = HashMap::new();
+    let mut vertex_ids: Vec<VertexIndex> = Vec::new();
+    let mut resc: Vec<Coord> = Vec::new();
+    let mut resn: Option<Vec<Normal>> = normals.as_ref().map(|_| Vec::new());
+    let mut resu: Option<Vec<UV>> = uvs.as_ref().map(|_| Vec::new());
+    let mut resfs: Vec<Vec<Point3<VertexIndex>>> = Vec::new();
+    let mut allfs: Vec<Point3<VertexIndex>> = Vec::new();
+    let mut names: Vec<String> = Vec::new();
+    let mut mtls: Vec<Option<MtlMaterial>> = Vec::new();
+
+    for (name, i) in groups.into_iter() {
+        names.push(name);
+        mtls.push(group2mtl.get(&i).cloned());
+
+        for point in groups_ids[i].iter() {
+            let idx = match vt2id.get(point) {
+                Some(i) => {
+                    vertex_ids.push(*i);
+                    None
+                }
+                None => {
+                    let idx = resc.len() as VertexIndex;
+
+                    resc.push(coords[point.x as usize]);
+
+                    let _ = resu
+                        .as_mut()
+                        .map(|l| l.push((*uvs.as_ref().unwrap())[point.y as usize]));
+                    let _ = resn
+                        .as_mut()
+                        .map(|l| l.push((*normals.as_ref().unwrap())[point.z as usize]));
+
+                    vertex_ids.push(idx);
+
+                    Some(idx)
+                }
+            };
+
+            let _ = idx.map(|i| vt2id.insert(*point, i));
+        }
+
+        let mut resf = Vec::with_capacity(vertex_ids.len() / 3);
+
+        assert!(vertex_ids.len() % 3 == 0);
+
+        for f in vertex_ids[..].chunks(3) {
+            resf.push(Point3::new(f[0], f[1], f[2]));
+            allfs.push(Point3::new(f[0], f[1], f[2]));
+        }
+
+        resfs.push(resf);
+        vertex_ids.clear();
+    }
+
+    let resn = resn.unwrap_or_else(|| Mesh::compute_normals_array(&resc[..], &allfs[..]));
+    let resn = Arc::new(RwLock::new(GPUVec::new(
+        resn,
+        BufferType::Array,
+        AllocationType::StaticDraw,
+    )));
+    let resu = resu.unwrap_or_else(|| repeat(Point2::origin()).take(resc.len()).collect());
+    let resu = Arc::new(RwLock::new(GPUVec::new(
+        resu,
+        BufferType::Array,
+        AllocationType::StaticDraw,
+    )));
+    let resc = Arc::new(RwLock::new(GPUVec::new(
+        resc,
+        BufferType::Array,
+        AllocationType::StaticDraw,
+    )));
+
+    let mut meshes = Vec::new();
+    for ((fs, name), mtl) in resfs
+        .into_iter()
+        .zip(names.into_iter())
+        .zip(mtls.into_iter())
+    {
+        if !fs.is_empty() {
+            let fs = Arc::new(RwLock::new(GPUVec::new(
+                fs,
+                BufferType::ElementArray,
+                AllocationType::StaticDraw,
+            )));
+            let mesh = Mesh::new_with_gpu_vectors(resc.clone(), fs, resn.clone(), resu.clone());
+            meshes.push((name, mesh, mtl))
+        }
+    }
+
+    meshes
 }
 
