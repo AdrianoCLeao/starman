@@ -6,6 +6,8 @@ use winit::{
 mod window;
 use window::window::Window;
 
+mod loader;
+
 fn main() {
     let event_loop = EventLoop::new();
 
