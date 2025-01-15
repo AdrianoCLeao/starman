@@ -7,7 +7,7 @@ mod window;
 use window::window::Window;
 
 mod loader;
-
+mod light;
 mod resource;
 
 fn main() {
