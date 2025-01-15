@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 winit = "0.24"
 nalgebra = "0.30"
+ncollide3d   = "0.33"
+num-traits   = "0.2"
