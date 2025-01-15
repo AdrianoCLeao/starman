@@ -8,6 +8,8 @@ use window::window::Window;
 
 mod loader;
 
+mod resource;
+
 fn main() {
     let event_loop = EventLoop::new();
 
