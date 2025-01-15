@@ -47,6 +47,117 @@ fn warn(line: usize, err: &str) {
     println!("At line {}: {}", line, err)
 }
 
+pub fn parse_file(
+    path: &Path,
+    mtl_base_dir: &Path,
+    basename: &str,
+) -> IoResult<Vec<(String, Mesh, Option<MtlMaterial>)>> {
+    match File::open(path) {
+        Ok(mut file) => {
+            let mut sfile = String::new();
+            file.read_to_string(&mut sfile)
+                .map(|_| parse(&sfile[..], mtl_base_dir, basename))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+pub fn parse(
+    string: &str,
+    mtl_base_dir: &Path,
+    basename: &str,
+) -> Vec<(String, Mesh, Option<MtlMaterial>)> {
+    let mut coords: Vec<Coord> = Vec::new();
+    let mut normals: Vec<Normal> = Vec::new();
+    let mut uvs: Vec<UV> = Vec::new();
+    let mut groups: HashMap<String, usize> = HashMap::new();
+    let mut groups_ids: Vec<Vec<Point3<VertexIndex>>> = Vec::new();
+    let mut curr_group: usize = 0;
+    let mut ignore_normals = false;
+    let mut ignore_uvs = false;
+    let mut mtllib = HashMap::new();
+    let mut group2mtl = HashMap::new();
+    let mut curr_mtl = None::<MtlMaterial>;
+
+    groups_ids.push(Vec::new());
+    let _ = groups.insert(basename.to_string(), 0);
+
+    for (l, line) in string.lines().enumerate() {
+        let mut words = split_words(line);
+        let tag = words.next();
+        match tag {
+            None => {}
+            Some(w) => {
+                if !w.is_empty() && w.as_bytes()[0] != b'#' {
+                    match w {
+                        "v" => coords.push(Point3::from(parse_v_or_vn(l, words))),
+                        "vn" => {
+                            if !ignore_normals {
+                                normals.push(parse_v_or_vn(l, words))
+                            }
+                        }
+                        "f" => parse_f(
+                            l,
+                            words,
+                            &coords[..],
+                            &uvs[..],
+                            &normals[..],
+                            &mut ignore_uvs,
+                            &mut ignore_normals,
+                            &mut groups_ids,
+                            curr_group,
+                        ),
+                        "vt" => {
+                            if !ignore_uvs {
+                                uvs.push(parse_vt(l, words))
+                            }
+                        }
+                        "g" => {
+                            curr_group = parse_g(l, words, basename, &mut groups, &mut groups_ids);
+                            let _ = curr_mtl
+                                .as_ref()
+                                .map(|mtl| group2mtl.insert(curr_group, mtl.clone()));
+                        }
+                        "mtllib" => parse_mtllib(l, words, mtl_base_dir, &mut mtllib),
+                        "usemtl" => {
+                            curr_group = parse_usemtl(
+                                l,
+                                words,
+                                curr_group,
+                                &mtllib,
+                                &mut group2mtl,
+                                &mut groups,
+                                &mut groups_ids,
+                                &mut curr_mtl,
+                            )
+                        }
+                        _ => {
+                            println!("Warning: unknown line {} ignored: `{}'", l, line);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if uvs.is_empty() && ignore_uvs {
+        println!("Warning: some texture coordinates are missing. Dropping texture coordinates infos for every vertex.");
+    }
+
+    if normals.is_empty() && ignore_normals {
+        println!("Warning: some normals are missing. Dropping normals infos for every vertex.");
+    }
+
+    reformat(
+        coords,
+        if ignore_normals { None } else { Some(normals) },
+        if ignore_uvs { None } else { Some(uvs) },
+        groups_ids,
+        groups,
+        group2mtl,
+    )
+}
+
 fn parse_usemtl<'a>(
     l: usize,
     ws: Words<'a>,
