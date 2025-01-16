@@ -17,6 +17,7 @@ mod resource;
 mod context;
 mod error;
 mod event;
+mod text;
 
 
 
