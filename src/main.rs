@@ -19,6 +19,7 @@ mod error;
 mod event;
 mod text;
 mod camera;
+mod scene;
 
 
 
