@@ -1,3 +1,8 @@
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
+extern crate bitflags;
+
 use winit::{
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
@@ -11,6 +16,8 @@ mod light;
 mod resource;
 mod context;
 mod error;
+mod event;
+
 
 fn main() {
     let event_loop = EventLoop::new();

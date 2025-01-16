@@ -997,10 +997,13 @@ dependencies = [
 name = "starman"
 version = "0.1.0"
 dependencies = [
+ "bitflags",
  "glow",
  "nalgebra",
  "ncollide3d",
  "num-traits",
+ "serde",
+ "serde_derive",
  "winit",
 ]
 
