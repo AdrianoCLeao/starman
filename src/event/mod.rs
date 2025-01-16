@@ -1,2 +1,2 @@
-mod event_manager;
-mod window_event;
+pub mod event_manager;
+pub mod window_event;
