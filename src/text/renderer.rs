@@ -33,23 +33,16 @@ pub struct TextRenderer {
 }
 
 impl TextRenderer {
-    /// Creates a new text renderer with `font` as the default font.
     pub fn new() -> TextRenderer {
-        //
-        // Create cache.
-        //
         let atlas_width = 1024;
         let atlas_height = 1024;
         let cache = Cache::builder()
             .dimensions(atlas_width, atlas_height)
             .build();
 
-        //
-        // Create texture.
-        //
+
         let ctxt = Context::get();
 
-        /* We're using 1 byte alignment buffering. */
         verify!(ctxt.pixel_storei(Context::UNPACK_ALIGNMENT, 1));
 
         let texture = verify!(ctxt
@@ -67,7 +60,6 @@ impl TextRenderer {
             None
         ));
 
-        /* Clamp to the edge to avoid artifacts when scaling. */
         verify!(ctxt.tex_parameteri(
             Context::TEXTURE_2D,
             Context::TEXTURE_WRAP_S,
@@ -79,7 +71,6 @@ impl TextRenderer {
             Context::CLAMP_TO_EDGE as i32
         ));
 
-        /* Linear filtering usually looks best for text. */
         verify!(ctxt.tex_parameteri(
             Context::TEXTURE_2D,
             Context::TEXTURE_MIN_FILTER,
@@ -91,9 +82,6 @@ impl TextRenderer {
             Context::LINEAR as i32
         ));
 
-        //
-        // Create shader.
-        //
         let mut shader = Effect::new_from_str(TEXT_VERTEX_SRC, TEXT_FRAGMENT_SRC);
         shader.use_program();
 
@@ -112,9 +100,6 @@ impl TextRenderer {
         }
     }
 
-    /// Adds a piece of text to be drawn during the next frame. The text is not persistent between
-    /// frames. This method must be called for each text to draw, and at each update loop
-    /// iteration.
     pub fn draw_text(
         &mut self,
         text: &str,
@@ -133,7 +118,6 @@ impl TextRenderer {
         })
     }
 
-    /// Actually draws the text.
     pub fn render(&mut self, width: f32, height: f32) {
         if self.contexts.is_empty() {
             return;
@@ -195,7 +179,7 @@ impl TextRenderer {
                         .glyph(glyph.id())
                         .scaled(glyph.scale())
                         .positioned(glyph.position());
-                    self.cache.queue_glyph(font_uid, gly); // FIXME: is the call to `.standalone()` costly?
+                    self.cache.queue_glyph(font_uid, gly); 
                 }
 
                 let _ = self.cache.cache_queued(|rect, data| {
@@ -265,9 +249,8 @@ impl TextRenderer {
     }
 }
 
-/// Vertex shader used by the material to display line.
 pub static TEXT_VERTEX_SRC: &str = A_VERY_LONG_STRING;
-/// Fragment shader used by the material to display line.
+
 pub static TEXT_FRAGMENT_SRC: &str = ANOTHER_VERY_LONG_STRING;
 
 const A_VERY_LONG_STRING: &str = "
