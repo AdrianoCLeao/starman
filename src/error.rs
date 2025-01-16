@@ -16,7 +16,7 @@ macro_rules! ignore(
         {
             let res = $e;
             #[cfg(not(target_arch = "wasm32"))]
-            { let _ = $crate::context::Context::get().get_error(); }
+            { let _ = $crate::context::context::Context::get().get_error(); }
             res
         }
     }

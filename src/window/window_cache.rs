@@ -1,6 +1,6 @@
 use std::{cell::RefCell, mem::take};
 
-use crate::resource::texture_manager::TextureManager;
+use crate::resource::{material_manager::MaterialManager, mesh_manager::MeshManager, texture_manager::TextureManager};
 
 #[derive(Default)]
 pub(crate) struct WindowCache {
