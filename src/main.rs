@@ -9,6 +9,8 @@ use window::window::Window;
 mod loader;
 mod light;
 mod resource;
+mod context;
+mod error;
 
 fn main() {
     let event_loop = EventLoop::new();
