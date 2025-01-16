@@ -360,6 +360,10 @@ impl AbstractContext for GLContext {
     fn create_framebuffer(&self) -> Option<Self::Framebuffer> {
         unsafe { self.context.create_framebuffer().ok() }
     }
+    
+    fn point_size(&self, _size: f32) {
+        //        unsafe { self.context.point_size(size) }
+    }
 
     fn is_framebuffer(&self, framebuffer: Option<&Self::Framebuffer>) -> bool {
         framebuffer.is_some()

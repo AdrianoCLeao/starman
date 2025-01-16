@@ -470,6 +470,10 @@ impl Context {
         self.ctxt.draw_arrays(mode, first, count)
     }
 
+    pub fn point_size(&self, size: f32) {
+        self.ctxt.point_size(size)
+    }
+
     pub fn line_width(&self, size: f32) {
         self.ctxt.line_width(size)
     }
@@ -668,6 +672,7 @@ pub(crate) trait AbstractContext {
         name: &str,
     ) -> Option<Self::UniformLocation>;
 
+    fn point_size(&self, size: f32);
     fn viewport(&self, x: i32, y: i32, width: i32, height: i32);
     fn scissor(&self, x: i32, y: i32, width: i32, height: i32);
     fn create_framebuffer(&self) -> Option<Self::Framebuffer>;
