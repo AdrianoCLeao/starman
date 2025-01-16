@@ -18,6 +18,7 @@ mod context;
 mod error;
 mod event;
 mod text;
+mod camera;
 
 
 

@@ -1,7 +1,7 @@
-use crate::event::WindowEvent;
-use crate::resource::ShaderUniform;
-use crate::window::Canvas;
-use na::{Isometry3, Matrix4, Point2, Point3, Point4, Vector2, Vector3};
+use crate::event::window_event::WindowEvent;
+use crate::resource::effect::ShaderUniform;
+use crate::window::canvas::Canvas;
+use nalgebra::{Isometry3, Matrix4, Point2, Point3, Point4, Vector2, Vector3};
 
 pub trait Camera {
     fn handle_event(&mut self, canvas: &Canvas, event: &WindowEvent);
