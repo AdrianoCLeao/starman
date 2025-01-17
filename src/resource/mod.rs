@@ -10,3 +10,4 @@ pub mod material_manager;
 pub mod framebuffer_manager;
 pub mod planar_mesh;
 pub mod planar_mesh_manager;
+pub mod planar_material_manager;
