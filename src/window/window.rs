@@ -647,13 +647,6 @@ impl Window {
         }
 
         self.text_renderer.render(w as f32, h as f32);
-        #[cfg(feature = "conrod")]
-        self.conrod_context.renderer.render(
-            w as f32,
-            h as f32,
-            self.canvas.scale_factor() as f32,
-            &self.conrod_context.textures,
-        );
 
         self.canvas.swap_buffers();
 

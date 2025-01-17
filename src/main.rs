@@ -24,6 +24,7 @@ mod builtin;
 mod renderer;
 mod planar_camera;
 mod post_processing;
+mod planar_line_renderer;
 
 fn main() {
     let event_loop = EventLoop::new();
