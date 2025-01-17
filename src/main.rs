@@ -22,6 +22,7 @@ mod camera;
 mod scene;
 mod builtin;
 mod renderer;
+mod planar_camera;
 
 
 fn main() {
