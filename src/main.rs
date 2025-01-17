@@ -3,10 +3,10 @@ extern crate serde_derive;
 extern crate serde;
 extern crate bitflags;
 
-use winit::{
-    event::{Event, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-};
+use light::Light;
+use nalgebra::{Translation3, UnitQuaternion, Vector3};
+use std::f32;
+use std::path::Path;
 
 mod window;
 use window::window::Window;
@@ -27,30 +27,30 @@ mod post_processing;
 mod planar_line_renderer;
 
 fn main() {
-    let event_loop = EventLoop::new();
+    let mut window = Window::new("Kiss3d: obj");
 
-    let custom_window = Window::open("My new window", false, 800, 600);
+    let obj_path = Path::new("assets/teapot/teapot.obj");
+    let mtl_path = Path::new("assets/teapot");
+    let mut teapot = window.add_obj(obj_path, mtl_path, Vector3::new(0.001, 0.001, 0.001));
+    teapot.append_translation(&Translation3::new(0.0, -0.05, -0.2));
 
-    let _winit_window = winit::window::WindowBuilder::new()
-        .with_title(&custom_window.title)
-        .with_inner_size(winit::dpi::LogicalSize::new(
-            custom_window.width as f64,
-            custom_window.height as f64,
-        ))
-        .build(&event_loop)
-        .unwrap();
+    let obj_path = Path::new("assets/rust_logo/rust_logo.obj");
+    let mtl_path = Path::new("assets/rust_logo");
+    let mut rust = window.add_obj(obj_path, mtl_path, Vector3::new(0.05, 0.05, 0.05));
+    rust.prepend_to_local_rotation(&UnitQuaternion::from_axis_angle(
+        &Vector3::x_axis(),
+        -f32::consts::FRAC_PI_2,
+    ));
+    rust.set_color(0.0, 0.0, 1.0);
 
-    event_loop.run(move |event, _, control_flow| {
-        *control_flow = ControlFlow::Wait;
+    window.set_light(Light::StickToCamera);
 
-        match event {
-            Event::WindowEvent {
-                event: WindowEvent::CloseRequested,
-                ..
-            } => {
-                *control_flow = ControlFlow::Exit;
-            }
-            _ => {}
-        }
-    });
+    let rot_teapot = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), 0.014);
+    let rot_rust = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), -0.014);
+
+    while window.render() {
+        teapot.prepend_to_local_rotation(&rot_teapot);
+        rust.prepend_to_local_rotation(&rot_rust);
+    }
 }
+
