@@ -27,7 +27,7 @@ mod post_processing;
 mod planar_line_renderer;
 
 fn main() {
-    let mut window = Window::new("Kiss3d: obj");
+    let mut window = Window::new("Starman Project");
 
     let obj_path = Path::new("assets/teapot/teapot.obj");
     let mtl_path = Path::new("assets/teapot");
