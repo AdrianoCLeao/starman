@@ -1,12 +1,12 @@
 use crate::camera::camera::Camera;
+use crate::context::context::Texture;
 use crate::light::Light;
-use crate::resource::vertex_index::VertexIndex;
 use crate::resource::material::Material;
 use crate::resource::material_manager::MaterialManager;
 use crate::resource::mesh::Mesh;
 use crate::resource::mesh_manager::MeshManager;
 use crate::resource::texture_manager::TextureManager;
-use crate::context::context::Texture;
+use crate::resource::vertex_index::VertexIndex;
 use crate::scene::object::Object;
 use nalgebra::{self as na, Isometry3, Point2, Point3, Translation3, UnitQuaternion, Vector3};
 use ncollide3d::procedural;
@@ -607,7 +607,7 @@ impl SceneNode {
     }
 
     pub fn add_obj(&mut self, path: &Path, mtl_dir: &Path, scale: Vector3<f32>) -> SceneNode {
-        let tex = TextureManager::get_global_manager(|tm| tm.get_default());
+        let tex = TextureManager::get_global_manager(|tm: &mut TextureManager| tm.get_default());
         let mat = MaterialManager::get_global_manager(|mm| mm.get_default());
 
         let result = MeshManager::load_obj(path, mtl_dir, path.to_str().unwrap()).map(|objs| {

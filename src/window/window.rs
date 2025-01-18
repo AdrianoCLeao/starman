@@ -339,7 +339,7 @@ impl Window {
             scene: SceneNode::new_empty(),
             scene2: PlanarSceneNode::new_empty(),
             light_mode: Light::Absolute(Point3::new(0.0, 10.0, 0.0)),
-            background: Vector3::new(0.0, 0.0, 0.0),
+            background: Vector3::new(0.20, 0.20, 0.20),
             line_renderer: LineRenderer::new(),
             planar_line_renderer: PlanarLineRenderer::new(),
             point_renderer: PointRenderer::new(),
