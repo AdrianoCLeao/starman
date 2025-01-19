@@ -4,7 +4,7 @@ extern crate serde;
 extern crate bitflags;
 
 use light::Light;
-use nalgebra::{Translation3, UnitQuaternion, Vector3};
+use nalgebra::{Point2, Point3, Translation3, UnitQuaternion, Vector3};
 use std::f32;
 use std::path::Path;
 
@@ -30,8 +30,9 @@ fn main() {
     let mut window = Window::new("Starman Project");
 
     let obj_path = Path::new("assets/rocket/rocket.obj");
-    let mtl_path = Path::new("assets/rocket/rocket");
+    let mtl_path = Path::new("assets/rocket/rocket.mtl");
     let mut rocket = window.add_obj(obj_path, mtl_path, Vector3::new(0.1, 0.1, 0.1));
+    rocket.append_translation(&Translation3::new(0.0, -0.1, 0.0));
 
     window.set_light(Light::StickToCamera);
 
@@ -39,6 +40,22 @@ fn main() {
 
     while window.render() {
         rocket.prepend_to_local_rotation(&rot_rocket);
+
+        window.draw_line(
+            &Point3::origin(),
+            &Point3::new(1.0, 0.0, 0.0),
+            &Point3::new(1.0, 0.0, 0.0),
+        );
+        window.draw_line(
+            &Point3::origin(),
+            &Point3::new(0.0, 1.0, 0.0),
+            &Point3::new(0.0, 1.0, 0.0),
+        );
+        window.draw_line(
+            &Point3::origin(),
+            &Point3::new(0.0, 0.0, 1.0),
+            &Point3::new(0.0, 0.0, 1.0),
+        );
     }
 }
 

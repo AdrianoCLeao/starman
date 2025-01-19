@@ -64,7 +64,7 @@ pub fn parse(string: &str) -> Vec<MtlMaterial> {
                             curr_material.opacity_map = Some(parse_name(l, words))
                         }
                         _ => {
-                            println!("Warning: unknown line {} ignored: `{}'", l, line);
+                            println!("Warning: unknown line {} ignored: '{}'", l, line);
                         }
                     }
                 }
