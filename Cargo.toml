@@ -16,3 +16,4 @@ image = "0.24"
 glutin = "0.26"
 rusttype = { version = "0.8.3", features = ["gpu_cache"] }
 either = "1"
+gltf = "1.4.1"
