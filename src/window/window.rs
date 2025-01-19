@@ -207,6 +207,10 @@ impl Window {
         self.scene.add_obj(path, mtl_dir, scale)
     }
 
+    pub fn add_glb(&mut self, path: &Path, scale: Vector3<f32>) -> SceneNode {
+        self.scene.add_glb(path, scale)
+    }
+
     pub fn add_mesh(&mut self, mesh: Rc<RefCell<Mesh>>, scale: Vector3<f32>) -> SceneNode {
         self.scene.add_mesh(mesh, scale)
     }

@@ -8,6 +8,7 @@ use crate::resource::mesh_manager::MeshManager;
 use crate::resource::texture_manager::TextureManager;
 use crate::resource::vertex_index::VertexIndex;
 use crate::scene::object::Object;
+use crate::loader::glb;
 use nalgebra::{self as na, Isometry3, Point2, Point3, Translation3, UnitQuaternion, Vector3};
 use ncollide3d::procedural;
 use ncollide3d::procedural::TriMesh;
@@ -16,6 +17,7 @@ use std::mem;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::rc::Weak;
+
 
 pub struct SceneNodeData {
     local_scale: Vector3<f32>,
@@ -665,6 +667,67 @@ impl SceneNode {
 
         result.unwrap()
     }
+
+    pub fn add_glb(&mut self, path: &Path, scale: Vector3<f32>) -> SceneNode {
+        let tex = TextureManager::get_global_manager(|tm: &mut TextureManager| tm.get_default());
+        let mat = MaterialManager::get_global_manager(|mm| mm.get_default());
+    
+        let result = glb::load_glb(path).map(|meshes| {
+            let mut root;
+    
+            let self_root = meshes.len() == 1;
+            let child_scale;
+    
+            if self_root {
+                root = self.clone();
+                child_scale = scale;
+            } else {
+                root = SceneNode::new(scale, na::one(), None);
+                self.add_child(root.clone());
+                child_scale = Vector3::from_element(1.0);
+            }
+    
+            for mesh in meshes.into_iter() {
+                let indices: Vec<Point3<u16>> = mesh
+                    .indices
+                    .chunks(3)
+                    .map(|chunk| Point3::new(chunk[0] as u16, chunk[1] as u16, chunk[2] as u16))
+                    .collect();
+
+                let mesh_data = Mesh::new(
+                    mesh.vertices,              
+                    indices,                
+                    None,                       
+                    None,                       
+                    false,                  
+                );
+            
+                let mut object = Object::new(
+                    Rc::new(RefCell::new(mesh_data)),
+                    1.0,
+                    1.0,
+                    1.0,
+                    tex.clone(),
+                    mat.clone(),
+                );
+            
+                let _ = root.add_object(child_scale, na::one(), object);
+            }
+    
+            if self_root {
+                root.data()
+                    .children
+                    .last()
+                    .expect("There was nothing on this glb file.")
+                    .clone()
+            } else {
+                root
+            }
+        });
+    
+        result.unwrap()
+    }
+    
 
     #[inline]
     pub fn apply_to_scene_nodes_mut<F: FnMut(&mut SceneNode)>(&mut self, f: &mut F) {
