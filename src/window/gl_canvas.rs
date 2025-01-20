@@ -13,7 +13,8 @@ use glutin::{
     window::WindowBuilder,
     ContextBuilder, GlRequest, PossiblyCurrent, WindowedContext,
 };
-use image::{GenericImage, Pixel};
+use image::{GenericImage, ImageBuffer, Pixel, Rgb};
+use nalgebra::Vector3;
 
 pub struct GLCanvas {
     window: WindowedContext<PossiblyCurrent>,
@@ -22,6 +23,7 @@ pub struct GLCanvas {
     key_states: [Action; Key::Unknown as usize + 1],
     button_states: [Action; MouseButton::Button8 as usize + 1],
     out_events: Sender<WindowEvent>,
+    buffer: ImageBuffer<Rgb<u8>, Vec<u8>>,
 }
 
 impl AbstractCanvas for GLCanvas {
@@ -85,6 +87,8 @@ impl AbstractCanvas for GLCanvas {
         let vao = ctxt.create_vertex_array();
         ctxt.bind_vertex_array(vao.as_ref());
 
+        let buffer = ImageBuffer::from_pixel(width, height, Rgb([0, 0, 0]));
+
         GLCanvas {
             window,
             events,
@@ -92,6 +96,7 @@ impl AbstractCanvas for GLCanvas {
             key_states: [Action::Release; Key::Unknown as usize + 1],
             button_states: [Action::Release; MouseButton::Button8 as usize + 1],
             out_events,
+            buffer,
         }
     }
 
@@ -100,6 +105,60 @@ impl AbstractCanvas for GLCanvas {
             if !callback(0.0) {
                 break;
             } 
+        }
+    }
+
+    fn get_buffer(&self) -> &ImageBuffer<Rgb<u8>, Vec<u8>> {
+        &self.buffer
+    }
+
+    fn get_buffer_mut(&mut self) -> &ImageBuffer<Rgb<u8>, Vec<u8>> {
+        &mut self.buffer
+    }
+
+    fn get_pixel_mut(&mut self, x: u32, y: u32) -> Option<&mut Rgb<u8>> {
+        let width = self.buffer.width();
+        let height = self.buffer.height();
+
+        if x < width && y < height {
+            let index = ((y * width + x) * 3) as usize;
+            let buffer = self.buffer.as_mut();
+
+            Some(unsafe {
+                &mut *(buffer[index..index + 3].as_mut_ptr() as *mut Rgb<u8>)
+            })
+        } else {
+            None
+        }
+    }
+
+    fn draw_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Vector3<f32>,
+    ) {
+        let (canvas_width, canvas_height) = (self.buffer.width(), self.buffer.height());
+
+        let x = x.max(0.0).min(canvas_width as f32) as u32;
+        let y = y.max(0.0).min(canvas_height as f32) as u32;
+        let width = width.max(0.0).min(canvas_width as f32 - x as f32) as u32;
+        let height = height.max(0.0).min(canvas_height as f32 - y as f32) as u32;
+
+        let color = Rgb([
+            (color.x * 255.0).clamp(0.0, 255.0) as u8,
+            (color.y * 255.0).clamp(0.0, 255.0) as u8,
+            (color.z * 255.0).clamp(0.0, 255.0) as u8,
+        ]);
+
+        for py in y..(y + height) {
+            for px in x..(x + width) {
+                if let Some(pixel) = self.get_pixel_mut(px, py) {
+                    *pixel = color;
+                }
+            }
         }
     }
 
@@ -194,6 +253,8 @@ impl AbstractCanvas for GLCanvas {
             };
         })
     }
+
+    
 
     fn swap_buffers(&mut self) {
         let _ = self.window.swap_buffers();

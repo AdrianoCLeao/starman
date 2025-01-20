@@ -5,7 +5,8 @@ use crate::event::window_event::{Action, Key, MouseButton, WindowEvent};
 use crate::window::gl_canvas::GLCanvas as CanvasImpl;
 #[cfg(target_arch = "wasm32")]
 use crate::window::WebGLCanvas as CanvasImpl;
-use image::{GenericImage, Pixel};
+use image::{GenericImage, ImageBuffer, Pixel, Rgb};
+use nalgebra::Vector3;
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum NumSamples {
@@ -57,6 +58,17 @@ impl Canvas {
 
     pub fn render_loop(data: impl FnMut(f64) -> bool + 'static) {
         CanvasImpl::render_loop(data)
+    }
+
+    pub fn draw_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        width: f32,
+        height: f32,
+        color: Vector3<f32>,
+    ) {
+        self.canvas.draw_rect(x, y, width, height, color);
     }
 
     pub fn poll_events(&mut self) {
@@ -142,4 +154,9 @@ pub(crate) trait AbstractCanvas {
 
     fn get_mouse_button(&self, button: MouseButton) -> Action;
     fn get_key(&self, key: Key) -> Action;
+    fn draw_rect(&mut self, x: f32, y: f32, width: f32, height: f32, color: Vector3<f32>);
+
+    fn get_buffer(&self) -> &ImageBuffer<Rgb<u8>, Vec<u8>>;
+    fn get_buffer_mut(&mut self) -> &ImageBuffer<Rgb<u8>, Vec<u8>>;
+    fn get_pixel_mut(&mut self, x: u32, y: u32) -> Option<&mut Rgb<u8>>;
 }

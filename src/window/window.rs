@@ -305,6 +305,19 @@ impl Window {
         self.light_mode = pos;
     }
 
+    pub fn draw_bar(&mut self) {
+        let bar_height = 30.0; 
+        let background_color = Vector3::new(0.15, 0.15, 0.15);
+
+        self.canvas.draw_rect(
+            0.0,                     
+            self.canvas.size().0 as f32 - bar_height, 
+            self.canvas.size().1 as f32,  
+            bar_height,                 
+            background_color,           
+        );
+    }
+
     pub fn new_hidden(title: &str) -> Window {
         Window::do_new(title, true, DEFAULT_WIDTH, DEFAULT_HEIGHT, None)
     }

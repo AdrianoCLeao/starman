@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate serde_derive;
-extern crate serde;
 extern crate bitflags;
+extern crate serde;
 
 use light::Light;
 use nalgebra::{Point2, Point3, Translation3, UnitQuaternion, Vector3};
@@ -11,20 +11,20 @@ use std::path::Path;
 mod window;
 use window::window::Window;
 
-mod loader;
-mod light;
-mod resource;
+mod builtin;
+mod camera;
 mod context;
 mod error;
 mod event;
-mod text;
-mod camera;
-mod scene;
-mod builtin;
-mod renderer;
+mod light;
+mod loader;
 mod planar_camera;
-mod post_processing;
 mod planar_line_renderer;
+mod post_processing;
+mod renderer;
+mod resource;
+mod scene;
+mod text;
 
 fn main() {
     let mut window = Window::new("Starman Project");
@@ -47,6 +47,8 @@ fn main() {
         rocket.prepend_to_local_rotation(&rot_rocket);
         glb.prepend_to_local_rotation(&rot_rocket);
 
+        window.draw_bar();
+
         window.draw_line(
             &Point3::origin(),
             &Point3::new(1.0, 0.0, 0.0),
@@ -64,4 +66,3 @@ fn main() {
         );
     }
 }
-
