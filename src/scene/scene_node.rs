@@ -29,6 +29,7 @@ pub struct SceneNodeData {
     children: Vec<SceneNode>,
     object: Option<Object>,
     parent: Option<Weak<RefCell<SceneNodeData>>>,
+    fixed: bool,
 }
 
 #[derive(Clone)]
@@ -71,7 +72,12 @@ impl SceneNodeData {
 
     pub fn render(&mut self, pass: usize, camera: &mut dyn Camera, light: &Light) {
         if self.visible {
-            self.do_render(&na::one(), &Vector3::from_element(1.0), pass, camera, light)
+            if self.fixed {
+                let camera_transform = camera.view_transform();
+                self.do_render(&camera_transform, &Vector3::from_element(1.0), pass, camera, light);
+            } else {
+                self.do_render(&na::one(), &Vector3::from_element(1.0), pass, camera, light);
+            }
         }
     }
 
@@ -448,6 +454,16 @@ impl SceneNodeData {
             self.up_to_date = true;
         }
     }
+
+    #[inline]
+    pub fn set_fixed(&mut self, fixed: bool) {
+        self.fixed = fixed;
+    }
+
+    #[inline]
+    pub fn is_fixed(&self) -> bool {
+        self.fixed
+    }
 }
 
 impl Default for SceneNode {
@@ -472,6 +488,7 @@ impl SceneNode {
             children: Vec::new(),
             object,
             parent: None,
+            fixed: false,
         };
 
         SceneNode {
@@ -481,6 +498,14 @@ impl SceneNode {
 
     pub fn new_empty() -> SceneNode {
         SceneNode::new(Vector3::from_element(1.0), na::one(), None)
+    }
+
+    pub fn set_fixed(&mut self, fixed: bool) {
+        self.data_mut().set_fixed(fixed);
+    }
+
+    pub fn is_fixed(&self) -> bool {
+        self.data().is_fixed()
     }
 
     pub fn unlink(&mut self) {

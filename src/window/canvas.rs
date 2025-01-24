@@ -1,6 +1,6 @@
 use std::sync::mpsc::Sender;
 
-use crate::event::window_event::{Action, Key, MouseButton, WindowEvent};
+use crate::{event::window_event::{Action, Key, MouseButton, WindowEvent}, scene::scene_node::SceneNode};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::window::gl_canvas::GLCanvas as CanvasImpl;
 #[cfg(target_arch = "wasm32")]
@@ -114,6 +114,18 @@ impl Canvas {
     pub fn get_key(&self, key: Key) -> Action {
         self.canvas.get_key(key)
     }
+
+    pub fn set_compass_node(&mut self, node: SceneNode) {
+        self.canvas.set_compass_node(node);
+    }
+
+    pub fn get_compass_node_mut(&mut self) -> Option<&mut SceneNode> {
+        return self.canvas.get_compass_node_mut();
+    }
+
+    pub fn has_compass(&self) -> bool {
+        return self.canvas.has_compass();
+    }
 }
 
 pub(crate) trait AbstractCanvas {
@@ -142,4 +154,7 @@ pub(crate) trait AbstractCanvas {
 
     fn get_mouse_button(&self, button: MouseButton) -> Action;
     fn get_key(&self, key: Key) -> Action;
+    fn set_compass_node(&mut self, node: SceneNode);
+    fn get_compass_node_mut(&mut self) -> Option<&mut SceneNode>;
+    fn has_compass(&self) -> bool;
 }

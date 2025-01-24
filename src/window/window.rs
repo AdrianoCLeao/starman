@@ -235,6 +235,31 @@ impl Window {
         self.scene.add_geom_with_name(geometry_name, scale)
     }
 
+    pub fn draw_compass(&mut self, size: f32, color: &Point3<f32>) {
+        let viewport_width = self.canvas.size().0 as f32;
+        let viewport_height = self.canvas.size().1 as f32;
+
+        let compass_exists = self.canvas.has_compass();
+    
+        if !compass_exists {
+            let mut compass_node = self.add_cube(size, size, size);
+            compass_node.set_fixed(true);
+            self.canvas.set_compass_node(compass_node);
+        }
+
+        if let Some(compass_node) = self.canvas.get_compass_node_mut() {
+            let x_position = viewport_width / 20.0 - size; 
+            let y_position = viewport_height / 20.0 - size; 
+            let z_position = 0.0; 
+    
+            let compass_position = Point3::new(x_position, y_position, z_position);
+    
+            compass_node.set_color(color.x, color.y, color.z);
+            compass_node.set_local_translation(compass_position.into());
+        }
+    }
+    
+
     pub fn add_cube(&mut self, wx: f32, wy: f32, wz: f32) -> SceneNode {
         self.scene.add_cube(wx, wy, wz)
     }

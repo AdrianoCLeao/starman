@@ -2,6 +2,7 @@ use std::sync::mpsc::Sender;
 
 use crate::context::context::Context;
 use crate::event::window_event::{Action, Key, Modifiers, MouseButton, TouchAction, WindowEvent};
+use crate::scene::scene_node::SceneNode;
 use crate::window::canvas::{CanvasSetup, NumSamples};
 use crate::window::canvas::AbstractCanvas;
 use glutin::{
@@ -22,6 +23,7 @@ pub struct GLCanvas {
     key_states: [Action; Key::Unknown as usize + 1],
     button_states: [Action; MouseButton::Button8 as usize + 1],
     out_events: Sender<WindowEvent>,
+    compass_node: Option<SceneNode>,
 }
 
 impl AbstractCanvas for GLCanvas {
@@ -92,6 +94,7 @@ impl AbstractCanvas for GLCanvas {
             key_states: [Action::Release; Key::Unknown as usize + 1],
             button_states: [Action::Release; MouseButton::Button8 as usize + 1],
             out_events,
+            compass_node: None,
         }
     }
 
@@ -101,6 +104,18 @@ impl AbstractCanvas for GLCanvas {
                 break;
             } 
         }
+    }
+
+    fn set_compass_node(&mut self, node: SceneNode) {
+        self.compass_node = Some(node);
+    }
+
+    fn get_compass_node_mut(&mut self) -> Option<&mut SceneNode> {
+        self.compass_node.as_mut()
+    }
+
+    fn has_compass(&self) -> bool {
+        self.compass_node.is_some()
     }
 
     #[allow(deprecated)] 
