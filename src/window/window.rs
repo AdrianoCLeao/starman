@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use nalgebra::{Point2, Point3, Vector2, Vector3};
+use nalgebra::{Isometry3, Point2, Point3, Translation3, Vector2, Vector3};
 
 use crate::camera::camera::Camera;
 use crate::camera::arc_ball::ArcBall;
@@ -203,8 +203,8 @@ impl Window {
         self.scene2.add_group()
     }
 
-    pub fn add_obj(&mut self, path: &Path, mtl_dir: &Path, scale: Vector3<f32>) -> SceneNode {
-        self.scene.add_obj(path, mtl_dir, scale)
+    pub fn add_obj(&mut self, path: &Path, mtl_dir: &Path, scale: Vector3<f32>, position: Vector3<f32>) -> SceneNode {
+        self.scene.add_obj(path, mtl_dir, scale, position)
     }
 
     pub fn add_glb(&mut self, path: &Path, scale: Vector3<f32>) -> SceneNode {
