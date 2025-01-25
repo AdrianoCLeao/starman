@@ -4,7 +4,8 @@ extern crate serde;
 extern crate bitflags;
 
 use light::Light;
-use nalgebra::{Point2, Point3, Translation3, UnitQuaternion, Vector3};
+use nalgebra::{Isometry3, Point2, Point3, Translation3, UnitQuaternion, Vector3};
+use scene::object::Object;
 use std::f32;
 use std::path::Path;
 
@@ -33,10 +34,11 @@ fn main() {
     let mtl_path = Path::new("assets/rocket/rocket.mtl");
     let glb_path = Path::new("assets/box.glb");
 
-    //let mut glb = window.add_glb(glb_path, Vector3::new(0.1, 0.1, 0.1));
-    //glb.append_translation(&Translation3::new(0.0, 0.0, 0.0));
+    let mut glb = window.add_glb(glb_path, Vector3::new(0.1, 0.1, 0.1));
+    glb.append_translation(&Translation3::new(0.0, 0.0, 0.0));
 
-    let mut rocket = window.add_obj(obj_path, mtl_path, Vector3::new(0.1, 0.1, 0.1));
+    let position = Translation3::new(0.5, 0.0, 0.9);
+    let mut rocket = window.add_obj(obj_path, mtl_path, Vector3::new(0.1, 0.1, 0.1), position);
 
     window.set_light(Light::StickToCamera);
 
@@ -44,7 +46,7 @@ fn main() {
 
     while window.render() {
         rocket.prepend_to_local_rotation(&rot_rocket);
-        //glb.prepend_to_local_rotation(&rot_rocket);
+        glb.prepend_to_local_rotation(&rot_rocket);
         window.draw_compass(10.0, &Point3::new(1.0, 0.0, 0.0));
 
         window.draw_line(

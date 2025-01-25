@@ -633,7 +633,7 @@ impl SceneNode {
         )
     }
 
-    pub fn add_obj(&mut self, path: &Path, mtl_dir: &Path, scale: Vector3<f32>) -> SceneNode {
+    pub fn add_obj(&mut self, path: &Path, mtl_dir: &Path, scale: Vector3<f32>, position: Translation3<f32>) -> SceneNode {
         let tex = TextureManager::get_global_manager(|tm: &mut TextureManager| tm.get_default());
         let mat = MaterialManager::get_global_manager(|mm| mm.get_default());
 
@@ -642,9 +642,7 @@ impl SceneNode {
 
             let self_root = objs.len() == 1;
             let child_scale;
-
-            let position = Translation3::new(0.0, 0.0, 0.0);
-            let local_transform = Isometry3::from_parts(position, na::one());
+            let local_transform = Isometry3::from_parts(position, nalgebra::one());
 
             if self_root {
                 root = self.clone();
