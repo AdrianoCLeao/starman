@@ -203,7 +203,7 @@ impl Window {
         self.scene2.add_group()
     }
 
-    pub fn add_obj(&mut self, path: &Path, mtl_dir: &Path, scale: Vector3<f32>, position: Translation3<f32>) -> SceneNode {
+    pub fn add_obj(&mut self, path: &Path, mtl_dir: &Path, scale: Vector3<f32>, position: Vector3<f32>) -> SceneNode {
         self.scene.add_obj(path, mtl_dir, scale, position)
     }
 

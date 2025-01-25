@@ -633,17 +633,19 @@ impl SceneNode {
         )
     }
 
-    pub fn add_obj(&mut self, path: &Path, mtl_dir: &Path, scale: Vector3<f32>, position: Translation3<f32>) -> SceneNode {
+    pub fn add_obj(&mut self, path: &Path, mtl_dir: &Path, scale: Vector3<f32>, position: Vector3<f32>) -> SceneNode {
         let tex = TextureManager::get_global_manager(|tm: &mut TextureManager| tm.get_default());
         let mat = MaterialManager::get_global_manager(|mm| mm.get_default());
 
+        let position = Translation3::from(position);
+    
         let result = MeshManager::load_obj(path, mtl_dir, path.to_str().unwrap()).map(|objs| {
             let mut root;
-
+    
             let self_root = objs.len() == 1;
             let child_scale;
             let local_transform = Isometry3::from_parts(position, nalgebra::one());
-
+    
             if self_root {
                 root = self.clone();
                 child_scale = scale;
@@ -652,22 +654,22 @@ impl SceneNode {
                 self.add_child(root.clone());
                 child_scale = Vector3::from_element(1.0);
             }
-
+    
             for (_, mesh, mtl) in objs.into_iter() {
                 let mut object = Object::new(mesh, 1.0, 1.0, 1.0, tex.clone(), mat.clone());
-
+    
                 match mtl {
                     None => {}
                     Some(mtl) => {
                         object.set_color(mtl.diffuse.x, mtl.diffuse.y, mtl.diffuse.z);
-
+    
                         for t in mtl.diffuse_texture.iter() {
                             let mut tpath = PathBuf::new();
                             tpath.push(mtl_dir);
                             tpath.push(&t[..]);
                             object.set_texture_from_file(&tpath, tpath.to_str().unwrap())
                         }
-
+    
                         for t in mtl.ambiant_texture.iter() {
                             let mut tpath = PathBuf::new();
                             tpath.push(mtl_dir);
@@ -676,10 +678,10 @@ impl SceneNode {
                         }
                     }
                 }
-
+    
                 let _ = root.add_object(child_scale, local_transform, object);
             }
-
+    
             if self_root {
                 root.data()
                     .children
@@ -690,9 +692,9 @@ impl SceneNode {
                 root
             }
         });
-
+    
         result.unwrap()
-    }
+    }    
 
     pub fn  add_glb(&mut self, path: &Path, scale: Vector3<f32>) -> SceneNode {
         let tex = TextureManager::get_global_manager(|tm: &mut TextureManager| tm.get_default());

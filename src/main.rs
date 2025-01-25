@@ -37,8 +37,7 @@ fn main() {
     let mut glb = window.add_glb(glb_path, Vector3::new(0.1, 0.1, 0.1));
     glb.append_translation(&Translation3::new(0.0, 0.0, 0.0));
 
-    let position = Translation3::new(0.5, 0.0, 0.9);
-    let mut rocket = window.add_obj(obj_path, mtl_path, Vector3::new(0.1, 0.1, 0.1), position);
+    let mut rocket = window.add_obj(obj_path, mtl_path, Vector3::new(0.1, 0.1, 0.1), Vector3::new(0.5, 0.0, 0.9));
 
     window.set_light(Light::StickToCamera);
 
