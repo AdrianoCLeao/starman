@@ -643,11 +643,14 @@ impl SceneNode {
             let self_root = objs.len() == 1;
             let child_scale;
 
+            let position = Translation3::new(0.0, 0.0, 0.0);
+            let local_transform = Isometry3::from_parts(position, na::one());
+
             if self_root {
                 root = self.clone();
                 child_scale = scale;
             } else {
-                root = SceneNode::new(scale, na::one(), None);
+                root = SceneNode::new(scale, local_transform, None);
                 self.add_child(root.clone());
                 child_scale = Vector3::from_element(1.0);
             }
@@ -676,7 +679,7 @@ impl SceneNode {
                     }
                 }
 
-                let _ = root.add_object(child_scale, na::one(), object);
+                let _ = root.add_object(child_scale, local_transform, object);
             }
 
             if self_root {
@@ -693,7 +696,7 @@ impl SceneNode {
         result.unwrap()
     }
 
-    pub fn add_glb(&mut self, path: &Path, scale: Vector3<f32>) -> SceneNode {
+    pub fn  add_glb(&mut self, path: &Path, scale: Vector3<f32>) -> SceneNode {
         let tex = TextureManager::get_global_manager(|tm: &mut TextureManager| tm.get_default());
         let mat = MaterialManager::get_global_manager(|mm| mm.get_default());
     
