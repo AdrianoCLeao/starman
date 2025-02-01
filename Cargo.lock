@@ -1732,6 +1732,7 @@ dependencies = [
  "gltf",
  "glutin",
  "image 0.24.9",
+ "lazy_static",
  "nalgebra",
  "ncollide3d",
  "num-traits",

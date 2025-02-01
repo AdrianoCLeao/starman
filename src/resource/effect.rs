@@ -4,8 +4,10 @@ use std::marker::PhantomData;
 use std::mem;
 use std::path::Path;
 use std::str;
+use std::sync::Mutex;
+use lazy_static::lazy_static;
 
-use crate::context::context::{Context, GLintptr, Program, Shader, UniformLocation};
+use crate::context::context::{Context, GLintptr, Program, Shader, UniformLocation, VertexArray};
 use crate::resource::gl_primitive::GLPrimitive;
 use crate::resource::gpu_vector::GPUVec;
 use crate::verify;
@@ -120,33 +122,50 @@ impl<T: GLPrimitive> ShaderAttribute<T> {
         verify!(Context::get().enable_vertex_attrib_array(self.id));
     }
 
-    pub fn bind(&mut self, vector: &mut GPUVec<T>) {
+    pub fn bind(&mut self, vector: &mut crate::resource::gpu_vector::GPUVec<T>) {
+        lazy_static! {
+            static ref GLOBAL_VAO: Mutex<Option<VertexArray>> = Mutex::new(None);
+        }
+        
+        {
+            let mut vao_lock = GLOBAL_VAO.lock().unwrap();
+            if vao_lock.is_none() {
+                *vao_lock = Some(Context::get().create_vertex_array()
+                    .expect("Falha ao criar VAO"));
+            }
+            Context::get().bind_vertex_array(vao_lock.as_ref());
+        }
+
         vector.bind();
 
-        let vao = Context::get().create_vertex_array().expect("Falha ao criar VAO");
-        Context::get().bind_vertex_array(Some(&vao));
-
-    }
-
-    pub fn bind_sub_buffer(&mut self, vector: &mut GPUVec<T>, strides: usize, start_index: usize) {
-        unsafe { self.bind_sub_buffer_generic(vector, strides, start_index) }
-    }
-
-    pub unsafe fn bind_sub_buffer_generic<T2: GLPrimitive>(
-        &mut self,
-        vector: &mut GPUVec<T2>,
-        strides: usize,
-        start_index: usize,
-    ) {
-        vector.bind();
-
-        verify!(Context::get().vertex_attrib_pointer(
+        crate::verify!(Context::get().vertex_attrib_pointer(
             self.id,
             T::size() as i32,
             T::GLTYPE,
             false,
-            ((strides + 1) * mem::size_of::<T2>()) as i32,
-            (start_index * mem::size_of::<T2>()) as GLintptr
+            0,  
+            0   
+        ));
+    }
+
+    pub fn bind_sub_buffer(&mut self, vector: &mut crate::resource::gpu_vector::GPUVec<T>, strides: usize, start_index: usize) {
+        unsafe { self.bind_sub_buffer_generic(vector, strides, start_index) }
+    }
+
+    pub unsafe fn bind_sub_buffer_generic<T2: crate::resource::gl_primitive::GLPrimitive>(
+        &mut self,
+        vector: &mut crate::resource::gpu_vector::GPUVec<T2>,
+        strides: usize,
+        start_index: usize,
+    ) {
+        vector.bind();
+        crate::verify!(Context::get().vertex_attrib_pointer(
+            self.id,
+            T::size() as i32,
+            T::GLTYPE,
+            false,
+            ((strides + 1) * std::mem::size_of::<T2>()) as i32,
+            (start_index * std::mem::size_of::<T2>()) as crate::context::context::GLintptr
         ));
     }
 }
