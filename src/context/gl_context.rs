@@ -21,6 +21,10 @@ impl GLContext {
             context: Arc::new(ctxt),
         }
     }
+
+    pub fn raw_gl(&self) -> Arc<Context> {
+        self.context.clone()
+    }
 }
 
 impl AbstractContextConst for GLContext {

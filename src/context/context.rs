@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
-use std::sync::Once;
+use std::rc::Rc;
+use std::sync::{Arc, Once};
 
 use crate::resource::gl_primitive::GLPrimitive;
 use crate::{context::gl_context::GLContext as ContextImpl, verify};
@@ -460,6 +461,10 @@ impl Context {
 
     pub fn disable(&self, cap: GLenum) {
         self.ctxt.disable(cap)
+    }
+
+    pub fn raw_gl(&self) -> Arc<glow::Context> {
+        self.ctxt.raw_gl()
     }
 
     pub fn draw_elements(&self, mode: GLenum, count: i32, type_: GLenum, offset: GLintptr) {

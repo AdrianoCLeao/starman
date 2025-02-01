@@ -7,12 +7,15 @@ use std::time::Duration;
 
 use nalgebra::{Isometry3, Point2, Point3, Translation3, Vector2, Vector3};
 
-use crate::camera::camera::Camera;
+use egui::{Context as EguiContext, RawInput};
+use egui_glow::Painter as EguiPainter;
+
 use crate::camera::arc_ball::ArcBall;
+use crate::camera::camera::Camera;
 use crate::context::context::Context;
 use crate::context::context::Texture;
-use crate::event::window_event::{Action, Key, WindowEvent};
 use crate::event::event_manager::EventManager;
+use crate::event::window_event::{Action, Key, WindowEvent};
 use crate::light::Light;
 use crate::planar_camera::{FixedView, PlanarCamera};
 use crate::planar_line_renderer::PlanarLineRenderer;
@@ -24,13 +27,13 @@ use crate::resource::framebuffer_manager::{FramebufferManager, RenderTarget};
 use crate::resource::mesh::Mesh;
 use crate::resource::planar_mesh::PlanarMesh;
 use crate::resource::texture_manager::TextureManager;
-use crate::scene::scene_node::SceneNode;
 use crate::scene::planar_scene_node::PlanarSceneNode;
+use crate::scene::scene_node::SceneNode;
 use crate::text::font::Font;
 use crate::text::renderer::TextRenderer;
 use crate::verify;
-use crate::window::canvas::CanvasSetup;
 use crate::window::canvas::Canvas;
+use crate::window::canvas::CanvasSetup;
 use crate::window::state::State;
 use image::imageops;
 use image::{GenericImage, Pixel};
@@ -48,7 +51,7 @@ pub struct Window {
     min_dur_per_frame: Option<Duration>,
     scene: SceneNode,
     scene2: PlanarSceneNode,
-    light_mode: Light, 
+    light_mode: Light,
     background: Vector3<f32>,
     line_renderer: LineRenderer,
     planar_line_renderer: PlanarLineRenderer,
@@ -62,6 +65,9 @@ pub struct Window {
     camera: Rc<RefCell<ArcBall>>,
     should_close: bool,
     canvas: Canvas,
+    egui_ctx: EguiContext,
+    ui_painter_left: EguiPainter,
+    ui_painter_right: EguiPainter,
 }
 
 impl Drop for Window {
@@ -203,7 +209,13 @@ impl Window {
         self.scene2.add_group()
     }
 
-    pub fn add_obj(&mut self, path: &Path, mtl_dir: &Path, scale: Vector3<f32>, position: Vector3<f32>) -> SceneNode {
+    pub fn add_obj(
+        &mut self,
+        path: &Path,
+        mtl_dir: &Path,
+        scale: Vector3<f32>,
+        position: Vector3<f32>,
+    ) -> SceneNode {
         self.scene.add_obj(path, mtl_dir, scale, position)
     }
 
@@ -240,7 +252,7 @@ impl Window {
         let viewport_height = self.canvas.size().1 as f32;
 
         let compass_exists = self.canvas.has_compass();
-    
+
         if !compass_exists {
             let mut compass_node = self.add_cube(size, size, size);
             compass_node.set_fixed(true);
@@ -248,17 +260,16 @@ impl Window {
         }
 
         if let Some(compass_node) = self.canvas.get_compass_node_mut() {
-            let x_position = viewport_width / 20.0 - size; 
-            let y_position = viewport_height / 20.0 - size; 
-            let z_position = 0.0; 
-    
+            let x_position = viewport_width / 20.0 - size;
+            let y_position = viewport_height / 20.0 - size;
+            let z_position = 0.0;
+
             let compass_position = Point3::new(x_position, y_position, z_position);
-    
+
             compass_node.set_color(color.x, color.y, color.z);
             compass_node.set_local_translation(compass_position.into());
         }
     }
-    
 
     pub fn add_cube(&mut self, wx: f32, wy: f32, wz: f32) -> SceneNode {
         self.scene.add_cube(wx, wy, wz)
@@ -319,7 +330,7 @@ impl Window {
     }
 
     pub fn is_closed(&self) -> bool {
-        false 
+        false
     }
 
     pub fn scale_factor(&self) -> f64 {
@@ -358,6 +369,13 @@ impl Window {
 
         init_gl();
         WindowCache::populate();
+        let egui_ctx = egui::Context::default();
+        let gl = Context::get().raw_gl();
+
+        let ui_painter_left = egui_glow::Painter::new(gl.clone(), "", None)
+            .expect("Falha ao criar o painter do egui para o painel esquerdo.");
+        let ui_painter_right = egui_glow::Painter::new(gl, "", None)
+            .expect("Falha ao criar o painter do egui para o painel direito.");
 
         let mut usr_window = Window {
             should_close: false,
@@ -386,6 +404,9 @@ impl Window {
                 Point3::new(0.0f32, 0.0, -1.0),
                 Point3::origin(),
             ))),
+            egui_ctx,
+            ui_painter_left,
+            ui_painter_right,
         };
 
         if hide {
@@ -541,7 +562,6 @@ impl Window {
         self.render_with(None, None, None)
     }
 
-
     #[cfg(not(target_arch = "wasm32"))]
     pub fn render_with_effect(&mut self, effect: &mut (dyn PostProcessingEffect)) -> bool {
         self.render_with(None, None, Some(effect))
@@ -626,6 +646,81 @@ impl Window {
         }
     }
 
+    fn render_ui_left(&mut self, width: i32, height: i32) {
+        let raw_input = RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::new(0.0, 0.0),
+                egui::vec2(width as f32, height as f32),
+            )),
+            pixels_per_point: Some(self.canvas.scale_factor() as f32),
+            ..Default::default()
+        };
+
+        self.egui_ctx.begin_frame(raw_input);
+
+        egui::SidePanel::left("left_side_panel")
+            .resizable(false)
+            .default_width(width as f32)
+            .show(&self.egui_ctx, |ui| {
+                ui.heading("Painel Esquerdo");
+                if ui.button("Botão 1").clicked() {
+                    println!("Botão 1 clicado!");
+                }
+                if ui.button("Botão 2").clicked() {
+                    println!("Botão 2 clicado!");
+                }
+                ui.separator();
+                ui.label("Outros widgets podem ser adicionados aqui.");
+            });
+
+        let full_output = self.egui_ctx.end_frame();
+        let clipped_primitives = self.egui_ctx.tessellate(full_output.shapes);
+
+        let screen_size_px = [width as u32, height as u32];
+        self.ui_painter_left.paint_and_update_textures(
+            screen_size_px,
+            self.egui_ctx.pixels_per_point(),
+            &clipped_primitives,
+            &full_output.textures_delta,
+        )
+    }
+
+    fn render_ui_right(&mut self, width: i32, height: i32) {
+        let raw_input = RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::new(0.0, 0.0),
+                egui::vec2(width as f32, height as f32),
+            )),
+            pixels_per_point: Some(self.canvas.scale_factor() as f32),
+            ..Default::default()
+        };
+
+        self.egui_ctx.begin_frame(raw_input);
+
+        egui::SidePanel::right("right_side_panel")
+            .resizable(false)
+            .default_width(width as f32)
+            .show(&self.egui_ctx, |ui| {
+                ui.heading("Painel Direito");
+                ui.label("Informações ou controles aqui.");
+                if ui.button("Ação").clicked() {
+                    println!("Botão do painel direito clicado!");
+                }
+            });
+
+        let full_output = self.egui_ctx.end_frame();
+        let clipped_primitives = self.egui_ctx.tessellate(full_output.shapes);
+
+        let screen_size_px = [width as u32, height as u32];
+
+        self.ui_painter_right.paint_and_update_textures(
+            screen_size_px,
+            self.egui_ctx.pixels_per_point(),
+            &clipped_primitives,
+            &full_output.textures_delta,
+        )
+    }
+
     fn render_single_frame(
         &mut self,
         camera: &mut dyn Camera,
@@ -633,11 +728,19 @@ impl Window {
         mut renderer: Option<&mut dyn Renderer>,
         mut post_processing: Option<&mut dyn PostProcessingEffect>,
     ) -> bool {
-        let w = self.width();
-        let h = self.height();
+        let window_width = self.width() as i32;
+        let window_height = self.height() as i32;
+        let sidebar_width: i32 = 200;
+        let central_width = window_width - 2 * sidebar_width;
 
-        planar_camera.handle_event(&self.canvas, &WindowEvent::FramebufferSize(w, h));
-        camera.handle_event(&self.canvas, &WindowEvent::FramebufferSize(w, h));
+        planar_camera.handle_event(
+            &self.canvas,
+            &WindowEvent::FramebufferSize(window_width as u32, window_height as u32),
+        );
+        camera.handle_event(
+            &self.canvas,
+            &WindowEvent::FramebufferSize(window_width as u32, window_height as u32),
+        );
         planar_camera.update(&self.canvas);
         camera.update(&self.canvas);
 
@@ -653,29 +756,64 @@ impl Window {
                 .select(&FramebufferManager::screen());
         }
 
-        for pass in 0usize..camera.num_passes() {
-            camera.start_pass(pass, &self.canvas);
-            self.render_scene(camera, pass);
+        {
+            let central_x = sidebar_width;
+            Context::get().viewport(central_x, 0, central_width, window_height);
+            Context::get().scissor(central_x, 0, central_width, window_height);
 
-            if let Some(ref mut renderer) = renderer {
-                renderer.render(pass, camera)
+            for pass in 0usize..camera.num_passes() {
+                camera.start_pass(pass, &self.canvas);
+                self.render_scene(camera, pass);
+
+                if let Some(ref mut renderer) = renderer {
+                    renderer.render(pass, camera);
+                }
             }
+            camera.render_complete(&self.canvas);
         }
-
-        camera.render_complete(&self.canvas);
 
         self.render_planar_scene(planar_camera);
 
         let (znear, zfar) = camera.clip_planes();
-
         if let Some(ref mut p) = post_processing {
             self.framebuffer_manager
                 .select(&FramebufferManager::screen());
-            p.update(0.016, w as f32, h as f32, znear, zfar);
+            p.update(
+                0.016,
+                central_width as f32,
+                window_height as f32,
+                znear,
+                zfar,
+            );
             p.draw(&self.post_process_render_target);
         }
 
-        self.text_renderer.render(w as f32, h as f32);
+        {
+            Context::get().viewport(0, 0, sidebar_width, window_height);
+            Context::get().scissor(0, 0, sidebar_width, window_height);
+            self.render_ui_left(sidebar_width, window_height);
+
+            // Renderize a barra lateral direita
+            Context::get().viewport(
+                window_width - sidebar_width,
+                0,
+                sidebar_width,
+                window_height,
+            );
+            Context::get().scissor(
+                window_width - sidebar_width,
+                0,
+                sidebar_width,
+                window_height,
+            );
+            self.render_ui_right(sidebar_width, window_height);
+        }
+
+        self.text_renderer
+            .render(window_width as f32, window_height as f32);
+
+        Context::get().viewport(0, 0, window_width, window_height);
+        Context::get().scissor(0, 0, window_width, window_height);
 
         self.canvas.swap_buffers();
 
@@ -687,12 +825,8 @@ impl Window {
                     std::thread::sleep(dur - elapsed);
                 }
             }
-
             self.curr_time = std::time::Instant::now();
         }
-
-        // self.transparent_objects.clear();
-        // self.opaque_objects.clear();
 
         !self.should_close()
     }

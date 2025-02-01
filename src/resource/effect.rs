@@ -123,14 +123,9 @@ impl<T: GLPrimitive> ShaderAttribute<T> {
     pub fn bind(&mut self, vector: &mut GPUVec<T>) {
         vector.bind();
 
-        verify!(Context::get().vertex_attrib_pointer(
-            self.id,
-            T::size() as i32,
-            T::GLTYPE,
-            false,
-            0,
-            0
-        ));
+        let vao = Context::get().create_vertex_array().expect("Falha ao criar VAO");
+        Context::get().bind_vertex_array(Some(&vao));
+
     }
 
     pub fn bind_sub_buffer(&mut self, vector: &mut GPUVec<T>, strides: usize, start_index: usize) {
@@ -183,6 +178,8 @@ fn load_shader_program(vertex_shader: &str, fragment_shader: &str) -> (Program, 
 fn check_shader_error(shader: &Shader) {
     let ctxt = Context::get();
     let compiles = ctxt.get_shader_parameter_int(shader, Context::COMPILE_STATUS);
+
+    let log = ctxt.get_shader_info_log(&shader);
 
     if compiles == Some(0) {
         if let Some(log) = ctxt.get_shader_info_log(shader) {
