@@ -83,14 +83,14 @@ pub(crate) fn upload_rgba8_texture(
     let prepared = prepare_rgba8_upload_data(width, height, pixels)?;
 
     queue.write_texture(
-        wgpu::ImageCopyTexture {
+        wgpu::TexelCopyTextureInfo {
             texture,
             mip_level: 0,
             origin: wgpu::Origin3d::ZERO,
             aspect: wgpu::TextureAspect::All,
         },
         prepared.data.as_ref(),
-        wgpu::ImageDataLayout {
+        wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(prepared.bytes_per_row),
             rows_per_image: Some(prepared.rows_per_image),
