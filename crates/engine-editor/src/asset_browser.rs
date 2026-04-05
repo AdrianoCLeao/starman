@@ -3,7 +3,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::{
+    mpsc::{self, Receiver, Sender, TryRecvError},
+    Arc, Mutex,
+};
 
 use egui::TextureHandle;
 use engine_math::glam::{Vec2, Vec3, Vec4};
@@ -16,6 +19,7 @@ use crate::config::{AssetBrowserConfig, AssetBrowserViewModeConfig};
 const THUMBNAIL_EDGE_PX: u32 = 64;
 const MAX_THUMBNAIL_CACHE_ITEMS: usize = 512;
 const MAX_PENDING_THUMBNAIL_JOBS: usize = 64;
+const THUMBNAIL_WORKER_COUNT: usize = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AssetKind {
@@ -64,6 +68,13 @@ struct ThumbnailResult {
     image: Option<ThumbnailImageData>,
 }
 
+#[derive(Clone, Debug)]
+struct ThumbnailJob {
+    relative_path: String,
+    disk_path: PathBuf,
+    kind: AssetKind,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ProjectedVertex {
     screen: Vec2,
@@ -80,7 +91,8 @@ pub(crate) struct AssetBrowserState {
     dirty: bool,
     _watcher: Option<RecommendedWatcher>,
     watcher_rx: Option<Receiver<notify::Result<Event>>>,
-    thumbnail_tx: Sender<ThumbnailResult>,
+    thumbnail_job_tx: Sender<ThumbnailJob>,
+    thumbnail_workers_available: bool,
     thumbnail_rx: Receiver<ThumbnailResult>,
     thumbnail_cache: HashMap<String, TextureHandle>,
     thumbnail_pending: HashSet<String>,
@@ -104,7 +116,10 @@ impl AssetBrowserState {
         } else {
             (None, None)
         };
+        let (thumbnail_job_tx, thumbnail_job_rx) = mpsc::channel();
         let (thumbnail_tx, thumbnail_rx) = mpsc::channel();
+        let thumbnail_workers_available =
+            spawn_thumbnail_workers(thumbnail_job_rx, thumbnail_tx, THUMBNAIL_WORKER_COUNT);
 
         let mut state = Self {
             current_path: root_path.clone(),
@@ -116,7 +131,8 @@ impl AssetBrowserState {
             dirty: true,
             _watcher: watcher,
             watcher_rx,
-            thumbnail_tx,
+            thumbnail_job_tx,
+            thumbnail_workers_available,
             thumbnail_rx,
             thumbnail_cache: HashMap::new(),
             thumbnail_pending: HashSet::new(),
@@ -234,25 +250,26 @@ impl AssetBrowserState {
             return false;
         }
 
+        if !self.thumbnail_workers_available {
+            self.thumbnail_failed.insert(entry.relative_path.clone());
+            return false;
+        }
+
         let relative_path = entry.relative_path.clone();
-        let disk_path = self.root_path.join(&entry.relative_path);
-        let kind = entry.kind;
-        let sender = self.thumbnail_tx.clone();
-        let relative_path_for_job = relative_path.clone();
+        let Some(disk_path) = self.resolve_relative_path(&entry.relative_path) else {
+            self.thumbnail_failed.insert(entry.relative_path.clone());
+            return false;
+        };
 
         self.thumbnail_pending.insert(relative_path);
 
-        let spawn_result = std::thread::Builder::new()
-            .name("asset-thumbnail".to_owned())
-            .spawn(move || {
-                let image = generate_thumbnail_image(&disk_path, kind);
-                let _ = sender.send(ThumbnailResult {
-                    relative_path: relative_path_for_job,
-                    image,
-                });
-            });
+        let send_result = self.thumbnail_job_tx.send(ThumbnailJob {
+            relative_path: entry.relative_path.clone(),
+            disk_path,
+            kind: entry.kind,
+        });
 
-        if spawn_result.is_err() {
+        if send_result.is_err() {
             self.thumbnail_pending.remove(&entry.relative_path);
             self.thumbnail_failed.insert(entry.relative_path.clone());
             return false;
@@ -968,6 +985,62 @@ fn setup_recursive_watcher(
     (Some(watcher), Some(rx))
 }
 
+fn spawn_thumbnail_workers(
+    thumbnail_job_rx: Receiver<ThumbnailJob>,
+    thumbnail_tx: Sender<ThumbnailResult>,
+    worker_count: usize,
+) -> bool {
+    let shared_rx = Arc::new(Mutex::new(thumbnail_job_rx));
+    let mut spawned_workers = 0;
+
+    for worker_index in 0..worker_count {
+        let worker_rx = Arc::clone(&shared_rx);
+        let worker_tx = thumbnail_tx.clone();
+        let worker_name = format!("asset-thumbnail-{}", worker_index + 1);
+
+        let spawn_result = std::thread::Builder::new()
+            .name(worker_name)
+            .spawn(move || loop {
+                let job = {
+                    let Ok(rx_guard) = worker_rx.lock() else {
+                        return;
+                    };
+
+                    match rx_guard.recv() {
+                        Ok(job) => job,
+                        Err(_) => return,
+                    }
+                };
+
+                let image = generate_thumbnail_image(&job.disk_path, job.kind);
+                let _ = worker_tx.send(ThumbnailResult {
+                    relative_path: job.relative_path,
+                    image,
+                });
+            });
+
+        if spawn_result.is_ok() {
+            spawned_workers += 1;
+            continue;
+        }
+
+        log::warn!(
+            target: "engine::editor",
+            "asset browser could not spawn thumbnail worker {}",
+            worker_index + 1
+        );
+    }
+
+    if spawned_workers == 0 {
+        log::warn!(
+            target: "engine::editor",
+            "asset browser thumbnail workers unavailable"
+        );
+    }
+
+    spawned_workers > 0
+}
+
 fn should_render_thumbnail(entry: &AssetEntry) -> bool {
     !entry.is_directory && matches!(entry.kind, AssetKind::Texture | AssetKind::Mesh)
 }
@@ -1495,6 +1568,24 @@ mod tests {
         };
 
         assert!(!state.request_thumbnail_for_entry(&entry));
+    }
+
+    #[test]
+    fn request_thumbnail_rejects_path_escape() {
+        let guard = TempDirGuard::new("thumb-path-escape");
+        let mut state = make_state(guard.path.clone(), &AssetBrowserConfig::default());
+
+        let entry = AssetEntry {
+            relative_path: "../outside.png".to_owned(),
+            name: "outside.png".to_owned(),
+            is_directory: false,
+            kind: AssetKind::Texture,
+            file_size: 0,
+        };
+
+        assert!(!state.request_thumbnail_for_entry(&entry));
+        assert!(state.thumbnail_failed.contains("../outside.png"));
+        assert!(!state.thumbnail_pending.contains("../outside.png"));
     }
 
     #[test]

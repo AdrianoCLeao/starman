@@ -3978,6 +3978,7 @@ impl EditorApp {
         if let Some(relative) = navigate_to {
             self.asset_browser
                 .set_current_relative_path(relative.as_deref());
+            self.asset_browser.set_selected_relative_path(None);
         }
 
         ui.separator();
