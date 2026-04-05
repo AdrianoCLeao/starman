@@ -11,6 +11,7 @@ engine-assets = { path = "../engine-assets" }
 engine-core = { path = "../engine-core" }
 engine-math = { path = "../engine-math" }
 engine-physics = { path = "../engine-physics" }
+engine-render = { path = "../engine-render" }
 engine-reflect = { path = "../engine-reflect" }
 
 egui.workspace = true
