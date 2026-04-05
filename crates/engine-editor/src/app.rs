@@ -2975,11 +2975,11 @@ pub(crate) fn compute_gizmo_drag_transform(
 
             match axis_constraint {
                 Some(GizmoAxisConstraint::AxisX) => {
-                    pitch = 0.0;
+                    yaw = 0.0;
                     roll = 0.0;
                 }
                 Some(GizmoAxisConstraint::AxisY) => {
-                    yaw = 0.0;
+                    pitch = 0.0;
                     roll = 0.0;
                 }
                 Some(GizmoAxisConstraint::AxisZ) => {

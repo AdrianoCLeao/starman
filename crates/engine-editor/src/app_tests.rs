@@ -577,7 +577,34 @@ fn compute_gizmo_drag_transform_translate_axis_lock_z_only_moves_depth() {
 }
 
 #[test]
-fn compute_gizmo_drag_transform_rotate_axis_lock_y_ignores_yaw() {
+fn compute_gizmo_drag_transform_rotate_axis_lock_x_ignores_yaw() {
+    let initial = Transform {
+        translation: Vec3::ZERO,
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
+
+    let transformed = compute_gizmo_drag_transform(
+        &initial,
+        GizmoMode::Rotate,
+        GizmoOrientation::Global,
+        Some(GizmoAxisConstraint::AxisX),
+        false,
+        0.3,
+        -0.2,
+        1.0,
+        std::f32::consts::FRAC_PI_2,
+        0.5,
+        15.0,
+        0.1,
+    );
+
+    let expected = Quat::from_rotation_x(0.2 * std::f32::consts::TAU);
+    assert!(quat_is_close(transformed.rotation, expected, 1e-5));
+}
+
+#[test]
+fn compute_gizmo_drag_transform_rotate_axis_lock_y_ignores_pitch() {
     let initial = Transform {
         translation: Vec3::ZERO,
         rotation: Quat::IDENTITY,
@@ -599,7 +626,7 @@ fn compute_gizmo_drag_transform_rotate_axis_lock_y_ignores_yaw() {
         0.1,
     );
 
-    let expected = Quat::from_rotation_x(0.2 * std::f32::consts::TAU);
+    let expected = Quat::from_rotation_y(-0.3 * std::f32::consts::TAU);
     assert!(quat_is_close(transformed.rotation, expected, 1e-5));
 }
 
