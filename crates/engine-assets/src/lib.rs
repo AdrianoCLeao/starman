@@ -510,3 +510,117 @@ impl AssetModule {
 pub fn module_name() -> &'static str {
     "engine-assets"
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+    use std::sync::mpsc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use image::{Rgba, RgbaImage};
+    use notify::{event::ModifyKind, Event, EventKind};
+
+    use super::AssetServer;
+
+    struct TempDirGuard {
+        path: PathBuf,
+    }
+
+    impl TempDirGuard {
+        fn new(prefix: &str) -> Self {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time should be monotonic")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "motley-engine-assets-{}-{}-{}",
+                prefix,
+                std::process::id(),
+                timestamp
+            ));
+
+            std::fs::create_dir_all(&path).expect("temp directory should be created");
+            Self { path }
+        }
+    }
+
+    impl Drop for TempDirGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn write_test_png(path: &Path, rgba: [u8; 4]) {
+        let image = RgbaImage::from_pixel(1, 1, Rgba(rgba));
+        image.save(path).expect("png should be saved");
+    }
+
+    #[test]
+    fn poll_texture_hot_reload_reloads_tracked_texture_changes() {
+        let guard = TempDirGuard::new("hot-reload-tracked");
+        let texture_path = guard.path.join("tracked.png");
+        write_test_png(&texture_path, [255, 0, 0, 255]);
+
+        let mut server = AssetServer::new(guard.path.to_string_lossy().to_string());
+        let handle = server
+            .load_texture_handle("tracked.png")
+            .expect("tracked texture should load");
+        let initial_payload = server
+            .texture_payload(handle)
+            .expect("texture payload should exist")
+            .clone();
+
+        let (tx, rx) = mpsc::channel();
+        server.hot_reload_watcher = None;
+        server.hot_reload_rx = Some(rx);
+
+        write_test_png(&texture_path, [0, 255, 0, 255]);
+        let event = Event::new(EventKind::Modify(ModifyKind::Any)).add_path(texture_path);
+        tx.send(Ok(event)).expect("event should be sent");
+
+        let reload_count = server.poll_texture_hot_reload();
+        assert_eq!(reload_count, 1);
+
+        let updated_payload = server
+            .texture_payload(handle)
+            .expect("updated payload should exist");
+        assert!(updated_payload.revision > initial_payload.revision);
+        assert_ne!(updated_payload.pixels_rgba8, initial_payload.pixels_rgba8);
+    }
+
+    #[test]
+    fn poll_texture_hot_reload_ignores_untracked_files() {
+        let guard = TempDirGuard::new("hot-reload-untracked");
+        let tracked_texture_path = guard.path.join("tracked.png");
+        let other_texture_path = guard.path.join("other.png");
+
+        write_test_png(&tracked_texture_path, [255, 0, 0, 255]);
+        write_test_png(&other_texture_path, [0, 0, 255, 255]);
+
+        let mut server = AssetServer::new(guard.path.to_string_lossy().to_string());
+        let handle = server
+            .load_texture_handle("tracked.png")
+            .expect("tracked texture should load");
+        let initial_revision = server
+            .texture_payload(handle)
+            .expect("tracked payload should exist")
+            .revision;
+
+        let (tx, rx) = mpsc::channel();
+        server.hot_reload_watcher = None;
+        server.hot_reload_rx = Some(rx);
+
+        write_test_png(&other_texture_path, [0, 255, 0, 255]);
+        let event = Event::new(EventKind::Modify(ModifyKind::Any)).add_path(other_texture_path);
+        tx.send(Ok(event)).expect("event should be sent");
+
+        let reload_count = server.poll_texture_hot_reload();
+        assert_eq!(reload_count, 0);
+
+        let final_revision = server
+            .texture_payload(handle)
+            .expect("tracked payload should still exist")
+            .revision;
+        assert_eq!(final_revision, initial_revision);
+    }
+}
