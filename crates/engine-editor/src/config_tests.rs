@@ -1,6 +1,7 @@
 use crate::config::{
-    EditorConfig, GizmoAxisLockConfig, GizmoModeConfig, GizmoOrientationConfig, GizmoSnapConfig,
-    GizmoToolConfig, ViewportOverlayConfig,
+    AssetBrowserConfig, AssetBrowserViewModeConfig, EditorConfig, GizmoAxisLockConfig,
+    GizmoModeConfig, GizmoOrientationConfig, GizmoSnapConfig, GizmoToolConfig,
+    ViewportOverlayConfig,
 };
 
 #[test]
@@ -20,6 +21,13 @@ fn editor_config_default_has_expected_overlay_and_snap_settings() {
     assert_eq!(config.gizmo_tool.mode, GizmoModeConfig::Translate);
     assert_eq!(config.gizmo_tool.orientation, GizmoOrientationConfig::Local);
     assert_eq!(config.gizmo_tool.axis_lock, GizmoAxisLockConfig::Free);
+
+    assert!(config.asset_browser.current_relative_path.is_none());
+    assert!(config.asset_browser.filter.is_empty());
+    assert_eq!(
+        config.asset_browser.view_mode,
+        AssetBrowserViewModeConfig::Grid
+    );
 }
 
 #[test]
@@ -41,6 +49,11 @@ fn editor_config_roundtrip_preserves_overlay_and_snap_settings() {
             mode: GizmoModeConfig::Rotate,
             orientation: GizmoOrientationConfig::Global,
             axis_lock: GizmoAxisLockConfig::AxisZ,
+        },
+        asset_browser: AssetBrowserConfig {
+            current_relative_path: Some("textures".to_owned()),
+            filter: "rock".to_owned(),
+            view_mode: AssetBrowserViewModeConfig::List,
         },
         ..EditorConfig::default()
     };
@@ -66,6 +79,16 @@ fn editor_config_roundtrip_preserves_overlay_and_snap_settings() {
         GizmoOrientationConfig::Global
     );
     assert_eq!(parsed.gizmo_tool.axis_lock, GizmoAxisLockConfig::AxisZ);
+
+    assert_eq!(
+        parsed.asset_browser.current_relative_path.as_deref(),
+        Some("textures")
+    );
+    assert_eq!(parsed.asset_browser.filter, "rock");
+    assert_eq!(
+        parsed.asset_browser.view_mode,
+        AssetBrowserViewModeConfig::List
+    );
 }
 
 #[test]
@@ -97,4 +120,11 @@ fn editor_config_deserializes_legacy_payload_with_new_defaults() {
     assert_eq!(parsed.gizmo_tool.mode, GizmoModeConfig::Translate);
     assert_eq!(parsed.gizmo_tool.orientation, GizmoOrientationConfig::Local);
     assert_eq!(parsed.gizmo_tool.axis_lock, GizmoAxisLockConfig::Free);
+
+    assert!(parsed.asset_browser.current_relative_path.is_none());
+    assert!(parsed.asset_browser.filter.is_empty());
+    assert_eq!(
+        parsed.asset_browser.view_mode,
+        AssetBrowserViewModeConfig::Grid
+    );
 }

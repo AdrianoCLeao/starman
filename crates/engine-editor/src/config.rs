@@ -147,6 +147,24 @@ pub struct GizmoToolConfig {
     pub axis_lock: GizmoAxisLockConfig,
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetBrowserViewModeConfig {
+    #[default]
+    Grid,
+    List,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct AssetBrowserConfig {
+    #[serde(default)]
+    pub current_relative_path: Option<String>,
+    #[serde(default)]
+    pub filter: String,
+    #[serde(default)]
+    pub view_mode: AssetBrowserViewModeConfig,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EditorConfig {
     #[serde(default = "create_default_layout")]
@@ -162,6 +180,8 @@ pub struct EditorConfig {
     pub gizmo_snap: GizmoSnapConfig,
     #[serde(default)]
     pub gizmo_tool: GizmoToolConfig,
+    #[serde(default)]
+    pub asset_browser: AssetBrowserConfig,
 }
 
 impl Default for EditorConfig {
@@ -174,6 +194,7 @@ impl Default for EditorConfig {
             viewport_overlay: ViewportOverlayConfig::default(),
             gizmo_snap: GizmoSnapConfig::default(),
             gizmo_tool: GizmoToolConfig::default(),
+            asset_browser: AssetBrowserConfig::default(),
         }
     }
 }

@@ -1,4 +1,5 @@
 pub mod app;
+mod asset_browser;
 pub mod commands;
 pub mod config;
 pub mod inspector;
