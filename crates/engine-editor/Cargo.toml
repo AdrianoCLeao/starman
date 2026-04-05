@@ -22,6 +22,9 @@ dirs.workspace = true
 serde.workspace = true
 ron.workspace = true
 bytemuck.workspace = true
+notify.workspace = true
+image.workspace = true
+gltf.workspace = true
 
 log.workspace = true
 env_logger.workspace = true
