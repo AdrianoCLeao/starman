@@ -2006,6 +2006,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "game-runner"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "engine-assets",
+ "engine-audio",
+ "engine-core",
+ "engine-input",
+ "engine-physics",
+ "engine-reflect",
+ "engine-render",
+ "log",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
