@@ -1138,11 +1138,11 @@ impl EditorApp {
             );
         }
 
-        if self.gizmo_state.active_drag.is_some() && !ui.input(|input| input.pointer.primary_down())
+        if self.gizmo_state.active_drag.is_some()
+            && !ui.input(|input| input.pointer.primary_down())
+            && self.commit_active_gizmo_drag()
         {
-            if self.commit_active_gizmo_drag() {
-                self.sync_global_transforms_for_viewport();
-            }
+            self.sync_global_transforms_for_viewport();
         }
     }
 
@@ -1442,6 +1442,7 @@ impl EditorApp {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_world_space_ring(
         &self,
         ui: &egui::Ui,
@@ -2919,6 +2920,7 @@ pub(crate) fn snap_vec3(value: Vec3, step: f32) -> Vec3 {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn compute_gizmo_drag_transform(
     initial: &Transform,
     mode: GizmoMode,

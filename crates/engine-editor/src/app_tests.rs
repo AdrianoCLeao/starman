@@ -174,7 +174,7 @@ fn snap_scalar_rounds_to_nearest_step() {
 
 #[test]
 fn snap_scalar_with_non_positive_step_returns_original_value() {
-    let value = 3.14159;
+    let value = std::f32::consts::PI;
     assert!((snap_scalar(value, 0.0) - value).abs() <= f32::EPSILON);
     assert!((snap_scalar(value, -2.0) - value).abs() <= f32::EPSILON);
 }

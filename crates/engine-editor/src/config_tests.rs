@@ -24,24 +24,25 @@ fn editor_config_default_has_expected_overlay_and_snap_settings() {
 
 #[test]
 fn editor_config_roundtrip_preserves_overlay_and_snap_settings() {
-    let mut config = EditorConfig::default();
-
-    config.viewport_overlay = ViewportOverlayConfig {
-        show_grid: false,
-        show_collider_wireframes: true,
-        show_entity_labels: true,
-        show_fps: false,
-    };
-    config.gizmo_snap = GizmoSnapConfig {
-        enabled: true,
-        translate_step: 1.25,
-        rotate_step_degrees: 30.0,
-        scale_step: 0.25,
-    };
-    config.gizmo_tool = GizmoToolConfig {
-        mode: GizmoModeConfig::Rotate,
-        orientation: GizmoOrientationConfig::Global,
-        axis_lock: GizmoAxisLockConfig::AxisZ,
+    let config = EditorConfig {
+        viewport_overlay: ViewportOverlayConfig {
+            show_grid: false,
+            show_collider_wireframes: true,
+            show_entity_labels: true,
+            show_fps: false,
+        },
+        gizmo_snap: GizmoSnapConfig {
+            enabled: true,
+            translate_step: 1.25,
+            rotate_step_degrees: 30.0,
+            scale_step: 0.25,
+        },
+        gizmo_tool: GizmoToolConfig {
+            mode: GizmoModeConfig::Rotate,
+            orientation: GizmoOrientationConfig::Global,
+            axis_lock: GizmoAxisLockConfig::AxisZ,
+        },
+        ..EditorConfig::default()
     };
 
     let serialized = ron::ser::to_string_pretty(&config, ron::ser::PrettyConfig::new())

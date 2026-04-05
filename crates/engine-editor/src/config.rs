@@ -110,49 +110,34 @@ impl Default for GizmoSnapConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum GizmoModeConfig {
+    #[default]
     Translate,
     Rotate,
     Scale,
 }
 
-impl Default for GizmoModeConfig {
-    fn default() -> Self {
-        Self::Translate
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum GizmoOrientationConfig {
+    #[default]
     Local,
     Global,
 }
 
-impl Default for GizmoOrientationConfig {
-    fn default() -> Self {
-        Self::Local
-    }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum GizmoAxisLockConfig {
+    #[default]
     Free,
     AxisX,
     AxisY,
     AxisZ,
 }
 
-impl Default for GizmoAxisLockConfig {
-    fn default() -> Self {
-        Self::Free
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct GizmoToolConfig {
     #[serde(default)]
     pub mode: GizmoModeConfig,
@@ -160,16 +145,6 @@ pub struct GizmoToolConfig {
     pub orientation: GizmoOrientationConfig,
     #[serde(default)]
     pub axis_lock: GizmoAxisLockConfig,
-}
-
-impl Default for GizmoToolConfig {
-    fn default() -> Self {
-        Self {
-            mode: GizmoModeConfig::default(),
-            orientation: GizmoOrientationConfig::default(),
-            axis_lock: GizmoAxisLockConfig::default(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
