@@ -5,13 +5,13 @@ use engine_core::{Children, EntityName, Parent, Transform};
 use engine_math::glam::{Quat, Vec3};
 
 use crate::app::{
-    apply_axis_constraint, build_scene_tree_visibility_map, collect_scene_tree_roots,
-    compute_gizmo_axis_constraint, compute_gizmo_drag_intent, compute_gizmo_drag_transform,
-    cycle_gizmo_mode, gizmo_axis_constraint_label, gizmo_drag_intent_label,
-    gizmo_manual_axis_lock_label, gizmo_mode_label, gizmo_orientation_label,
-    is_scene_tree_descendant, ray_intersects_aabb, snap_scalar, snap_vec3,
-    toggle_gizmo_orientation, viewport_pick_ray, GizmoAxisConstraint, GizmoDragIntent, GizmoMode,
-    GizmoOrientation,
+    apply_axis_constraint, asset_drop_entity_name, build_scene_tree_visibility_map,
+    collect_scene_tree_roots, compute_gizmo_axis_constraint, compute_gizmo_drag_intent,
+    compute_gizmo_drag_transform, cycle_gizmo_mode, gizmo_axis_constraint_label,
+    gizmo_drag_intent_label, gizmo_manual_axis_lock_label, gizmo_mode_label,
+    gizmo_orientation_label, is_scene_tree_descendant, ray_intersects_aabb, snap_scalar, snap_vec3,
+    toggle_gizmo_orientation, viewport_drop_position, viewport_pick_ray, GizmoAxisConstraint,
+    GizmoDragIntent, GizmoMode, GizmoOrientation,
 };
 
 fn quat_is_close(lhs: Quat, rhs: Quat, epsilon: f32) -> bool {
@@ -138,6 +138,35 @@ fn viewport_pick_ray_points_forward_at_viewport_center() {
 
     assert!((origin - camera_position).length() <= 1e-6);
     assert!((direction - Vec3::NEG_Z).length() <= 1e-6);
+}
+
+#[test]
+fn viewport_drop_position_projects_to_ground_plane_when_camera_is_pitched_down() {
+    let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(320.0, 180.0));
+    let fallback = Vec3::new(5.0, 5.0, 5.0);
+    let pointer = egui::pos2(rect.center().x, rect.max.y - 2.0);
+
+    let drop_position = viewport_drop_position(
+        pointer,
+        rect,
+        Vec3::new(0.0, 3.0, 6.0),
+        Quat::IDENTITY,
+        std::f32::consts::FRAC_PI_4,
+        fallback,
+    );
+
+    assert!(drop_position.y.abs() <= 1e-4);
+    assert!((drop_position - fallback).length() > 1.0);
+}
+
+#[test]
+fn asset_drop_entity_name_uses_file_stem_and_normalizes_separators() {
+    assert_eq!(
+        asset_drop_entity_name("meshes/robot-knight.glb"),
+        "robot knight"
+    );
+    assert_eq!(asset_drop_entity_name("meshes/My_Crate.gltf"), "My Crate");
+    assert_eq!(asset_drop_entity_name(""), "Dropped Mesh");
 }
 
 #[test]
