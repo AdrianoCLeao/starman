@@ -24,7 +24,7 @@ license = "MIT OR Apache-2.0"
 bevy_ecs = { version = "0.15", default-features = false }
 bevy_reflect = { version = "0.15", features = ["glam"] }
 bytemuck = { version = "1.19", features = ["derive"] }
-wgpu = { version = "22", default-features = false, features = ["wgsl", "dx12", "metal", "webgpu"] }
+wgpu = { version = "24", default-features = false, features = ["wgsl", "metal", "webgpu"] }
 winit = { version = "0.30" }
 glam = { version = "0.29", features = ["serde"] }
 rapier3d = { version = "0.22" }
