@@ -12,4 +12,7 @@ mod app_tests;
 #[cfg(test)]
 mod commands_tests;
 
+#[cfg(test)]
+mod config_tests;
+
 pub use app::EditorApp;

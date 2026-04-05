@@ -71,5 +71,8 @@ pub(crate) fn acquire_frame(
         Err(wgpu::SurfaceError::OutOfMemory) => Err(EngineError::Render(
             "surface out of memory while acquiring frame".to_owned(),
         )),
+        Err(wgpu::SurfaceError::Other) => Err(EngineError::Render(
+            "surface acquire returned unknown error".to_owned(),
+        )),
     }
 }

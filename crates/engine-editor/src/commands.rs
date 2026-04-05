@@ -5,8 +5,7 @@ use bevy_ecs::world::World;
 use engine_core::{Children, EditorEntityBundle, EntityName, Parent};
 use engine_reflect::bevy_reflect::{PartialReflect, ReflectMut};
 use engine_reflect::{ComponentDescriptor, ComponentRegistry};
-
-use crate::viewport::{MeshRenderable3d, SpriteRenderable2d};
+use engine_render::{MeshRenderable3d, SpriteRenderable2d};
 
 pub trait EditorCommand: Send + Sync {
     fn execute(&mut self, world: &mut World);
