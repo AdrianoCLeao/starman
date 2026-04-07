@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::With;
@@ -49,6 +50,70 @@ const DEFAULT_DROP_MATERIAL_PATH: &str = "materials/default.ron";
 const RUNNER_CONTROL_PAUSE: &str = "pause";
 const RUNNER_CONTROL_RESUME: &str = "resume";
 const RUNNER_CONTROL_STOP: &str = "stop";
+const PLAY_MODE_STOP_GRACE_PERIOD: Duration = Duration::from_millis(250);
+const PLAY_MODE_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+static PLAY_MODE_SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn runner_executable_candidates(current_dir: &Path) -> [PathBuf; 2] {
+    [
+        current_dir.join(format!("game-runner{}", std::env::consts::EXE_SUFFIX)),
+        current_dir.join(format!("game_runner{}", std::env::consts::EXE_SUFFIX)),
+    ]
+}
+
+pub(crate) fn select_runner_executable_path(current_dir: &Path) -> Option<PathBuf> {
+    runner_executable_candidates(current_dir)
+        .into_iter()
+        .find(|candidate| candidate.exists())
+}
+
+pub(crate) fn resolve_runner_executable_path(current_exe: &Path) -> Result<PathBuf> {
+    let current_dir = current_exe.parent().ok_or_else(|| {
+        EngineError::Config("failed to resolve editor executable directory".to_owned())
+    })?;
+
+    if let Some(candidate) = select_runner_executable_path(current_dir) {
+        return Ok(candidate);
+    }
+
+    Err(EngineError::Config(format!(
+        "game-runner executable not found near editor binary (searched in {})",
+        current_dir.display()
+    )))
+}
+
+pub(crate) fn build_play_mode_snapshot_path(
+    temp_dir: &Path,
+    process_id: u32,
+    timestamp_nanos: u128,
+    sequence: u64,
+) -> PathBuf {
+    temp_dir.join("motley-playmode").join(format!(
+        "scene-{}-{}-{}.scene.ron",
+        process_id, timestamp_nanos, sequence
+    ))
+}
+
+fn wait_for_child_exit_with_timeout(
+    child: &mut Child,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> std::io::Result<Option<ExitStatus>> {
+    let start = Instant::now();
+
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+
+        if start.elapsed() >= timeout {
+            return Ok(None);
+        }
+
+        std::thread::sleep(poll_interval);
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PlayStatus {
@@ -690,25 +755,7 @@ impl EditorApp {
     fn runner_executable_path(&self) -> Result<PathBuf> {
         let current_exe =
             std::env::current_exe().map_err(|error| EngineError::Config(error.to_string()))?;
-        let current_dir = current_exe.parent().ok_or_else(|| {
-            EngineError::Config("failed to resolve editor executable directory".to_owned())
-        })?;
-
-        let candidates = [
-            current_dir.join(format!("game-runner{}", std::env::consts::EXE_SUFFIX)),
-            current_dir.join(format!("game_runner{}", std::env::consts::EXE_SUFFIX)),
-        ];
-
-        for candidate in candidates {
-            if candidate.exists() {
-                return Ok(candidate);
-            }
-        }
-
-        Err(EngineError::Config(format!(
-            "game-runner executable not found near editor binary (searched in {})",
-            current_dir.display()
-        )))
+        resolve_runner_executable_path(&current_exe)
     }
 
     fn play_mode_assets_root_argument(&self) -> String {
@@ -721,16 +768,18 @@ impl EditorApp {
     }
 
     fn create_play_mode_snapshot_path(&self) -> PathBuf {
-        let timestamp_millis = SystemTime::now()
+        let timestamp_nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|value| value.as_millis())
+            .map(|value| value.as_nanos())
             .unwrap_or_default();
+        let sequence = PLAY_MODE_SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
 
-        std::env::temp_dir().join("motley-playmode").join(format!(
-            "scene-{}-{}.scene.ron",
+        build_play_mode_snapshot_path(
+            &std::env::temp_dir(),
             std::process::id(),
-            timestamp_millis
-        ))
+            timestamp_nanos,
+            sequence,
+        )
     }
 
     fn create_play_mode_snapshot(&mut self) -> Result<PathBuf> {
@@ -881,19 +930,39 @@ impl EditorApp {
         }
 
         if let Some(mut child) = self.play_mode.child.take() {
-            match child.try_wait() {
-                Ok(Some(_)) => {}
-                Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+            let exited_gracefully = match wait_for_child_exit_with_timeout(
+                &mut child,
+                PLAY_MODE_STOP_GRACE_PERIOD,
+                PLAY_MODE_STOP_POLL_INTERVAL,
+            ) {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
                 Err(error) => {
                     self.log_message(
                         LogLevel::Warn,
-                        format!("Failed to poll runner process before stop: {}", error),
+                        format!("Failed to wait for graceful Play Mode shutdown: {}", error),
                     );
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    false
+                }
+            };
+
+            if !exited_gracefully {
+                if let Err(error) = child.kill() {
+                    if error.kind() != ErrorKind::InvalidInput {
+                        self.log_message(
+                            LogLevel::Warn,
+                            format!("Failed to terminate Play Mode runner process: {}", error),
+                        );
+                    }
+                }
+
+                if let Err(error) = child.wait() {
+                    if error.kind() != ErrorKind::InvalidInput {
+                        self.log_message(
+                            LogLevel::Warn,
+                            format!("Failed to reap Play Mode runner process: {}", error),
+                        );
+                    }
                 }
             }
         }
