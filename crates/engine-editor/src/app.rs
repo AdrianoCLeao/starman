@@ -1,7 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::io::ErrorKind;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::With;
@@ -15,8 +18,8 @@ use engine_assets::{
 };
 use engine_core::{
     create_world, register_core_reflection_types, Camera2d, Camera3d, Children, EditorEntityBundle,
-    EntityName, GlobalTransform, Parent, PrimaryCamera, RenderLayer2D, RenderLayer3D, Result,
-    SpatialBundle, Transform, Visible,
+    EngineError, EntityName, GlobalTransform, Parent, PrimaryCamera, RenderLayer2D, RenderLayer3D,
+    Result, SpatialBundle, Transform, Visible,
 };
 use engine_math::glam::{Affine3A, Quat, Vec3};
 use engine_math::Mat4;
@@ -44,6 +47,110 @@ use crate::viewport::{EditorCamera, ViewportRenderer};
 
 const DEFAULT_DROP_TEXTURE_PATH: &str = "textures/placeholder.png";
 const DEFAULT_DROP_MATERIAL_PATH: &str = "materials/default.ron";
+const RUNNER_CONTROL_PAUSE: &str = "pause";
+const RUNNER_CONTROL_RESUME: &str = "resume";
+const RUNNER_CONTROL_STOP: &str = "stop";
+const PLAY_MODE_STOP_GRACE_PERIOD: Duration = Duration::from_millis(250);
+const PLAY_MODE_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+static PLAY_MODE_SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn runner_executable_candidates(current_dir: &Path) -> [PathBuf; 2] {
+    [
+        current_dir.join(format!("game-runner{}", std::env::consts::EXE_SUFFIX)),
+        current_dir.join(format!("game_runner{}", std::env::consts::EXE_SUFFIX)),
+    ]
+}
+
+pub(crate) fn select_runner_executable_path(current_dir: &Path) -> Option<PathBuf> {
+    runner_executable_candidates(current_dir)
+        .into_iter()
+        .find(|candidate| candidate.exists())
+}
+
+pub(crate) fn resolve_runner_executable_path(current_exe: &Path) -> Result<PathBuf> {
+    let current_dir = current_exe.parent().ok_or_else(|| {
+        EngineError::Config("failed to resolve editor executable directory".to_owned())
+    })?;
+
+    if let Some(candidate) = select_runner_executable_path(current_dir) {
+        return Ok(candidate);
+    }
+
+    Err(EngineError::Config(format!(
+        "game-runner executable not found near editor binary (searched in {})",
+        current_dir.display()
+    )))
+}
+
+pub(crate) fn build_play_mode_snapshot_path(
+    temp_dir: &Path,
+    process_id: u32,
+    timestamp_nanos: u128,
+    sequence: u64,
+) -> PathBuf {
+    temp_dir.join("motley-playmode").join(format!(
+        "scene-{}-{}-{}.scene.ron",
+        process_id, timestamp_nanos, sequence
+    ))
+}
+
+fn wait_for_child_exit_with_timeout(
+    child: &mut Child,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> std::io::Result<Option<ExitStatus>> {
+    let start = Instant::now();
+
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status));
+        }
+
+        if start.elapsed() >= timeout {
+            return Ok(None);
+        }
+
+        std::thread::sleep(poll_interval);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlayStatus {
+    Stopped,
+    Playing,
+    Paused,
+}
+
+impl PlayStatus {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Stopped => "Stopped",
+            Self::Playing => "Playing",
+            Self::Paused => "Paused",
+        }
+    }
+
+    fn is_running(self) -> bool {
+        !matches!(self, Self::Stopped)
+    }
+}
+
+struct PlayModeState {
+    status: PlayStatus,
+    child: Option<Child>,
+    snapshot_scene_path: Option<PathBuf>,
+}
+
+impl Default for PlayModeState {
+    fn default() -> Self {
+        Self {
+            status: PlayStatus::Stopped,
+            child: None,
+            snapshot_scene_path: None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum LogLevel {
@@ -566,6 +673,7 @@ pub struct EditorApp {
     editor_camera: EditorCamera,
     gizmo_state: GizmoState,
     viewport_overlay: ViewportOverlayState,
+    play_mode: PlayModeState,
     started_at: Instant,
     console: ConsolePanel,
 }
@@ -609,6 +717,7 @@ impl EditorApp {
             editor_camera,
             gizmo_state,
             viewport_overlay,
+            play_mode: PlayModeState::default(),
             started_at: Instant::now(),
             console,
         };
@@ -641,6 +750,300 @@ impl EditorApp {
 
     fn now_seconds(&self) -> f64 {
         self.started_at.elapsed().as_secs_f64()
+    }
+
+    fn runner_executable_path(&self) -> Result<PathBuf> {
+        let current_exe =
+            std::env::current_exe().map_err(|error| EngineError::Config(error.to_string()))?;
+        resolve_runner_executable_path(&current_exe)
+    }
+
+    fn play_mode_assets_root_argument(&self) -> String {
+        let root = PathBuf::from(self.asset_server.root().as_str());
+        if let Ok(canonical) = std::fs::canonicalize(&root) {
+            return canonical.to_string_lossy().into_owned();
+        }
+
+        root.to_string_lossy().into_owned()
+    }
+
+    fn create_play_mode_snapshot_path(&self) -> PathBuf {
+        let timestamp_nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|value| value.as_nanos())
+            .unwrap_or_default();
+        let sequence = PLAY_MODE_SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+
+        build_play_mode_snapshot_path(
+            &std::env::temp_dir(),
+            std::process::id(),
+            timestamp_nanos,
+            sequence,
+        )
+    }
+
+    fn create_play_mode_snapshot(&mut self) -> Result<PathBuf> {
+        let snapshot_path = self.create_play_mode_snapshot_path();
+
+        if let Some(parent) = snapshot_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| EngineError::Config(error.to_string()))?;
+        }
+
+        self.save_scene(&snapshot_path)?;
+        Ok(snapshot_path)
+    }
+
+    fn cleanup_play_mode_snapshot(&mut self) {
+        let Some(path) = self.play_mode.snapshot_scene_path.take() else {
+            return;
+        };
+
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                self.log_message(
+                    LogLevel::Warn,
+                    format!(
+                        "Failed to remove Play Mode snapshot {}: {}",
+                        path.display(),
+                        error
+                    ),
+                );
+            }
+        }
+    }
+
+    fn send_runner_control_command(&mut self, command: &str) -> Result<()> {
+        let Some(child) = self.play_mode.child.as_mut() else {
+            return Err(EngineError::Config(
+                "Play Mode runner process is not active".to_owned(),
+            ));
+        };
+
+        let Some(stdin) = child.stdin.as_mut() else {
+            return Err(EngineError::Config(
+                "Play Mode runner stdin channel is unavailable".to_owned(),
+            ));
+        };
+
+        writeln!(stdin, "{}", command).map_err(|error| EngineError::Config(error.to_string()))?;
+        stdin
+            .flush()
+            .map_err(|error| EngineError::Config(error.to_string()))
+    }
+
+    fn start_play_mode(&mut self) -> Result<()> {
+        if self.play_mode.status.is_running() {
+            return Ok(());
+        }
+
+        let snapshot_path = self.create_play_mode_snapshot()?;
+        let runner_path = self.runner_executable_path()?;
+        let assets_root_arg = self.play_mode_assets_root_argument();
+
+        let child_result = Command::new(&runner_path)
+            .arg(&snapshot_path)
+            .arg(&assets_root_arg)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn();
+
+        let child = match child_result {
+            Ok(child) => child,
+            Err(error) => {
+                let _ = std::fs::remove_file(&snapshot_path);
+                return Err(EngineError::Config(format!(
+                    "failed to spawn game-runner '{}': {}",
+                    runner_path.display(),
+                    error
+                )));
+            }
+        };
+
+        if child.stdin.is_none() {
+            let _ = std::fs::remove_file(&snapshot_path);
+            return Err(EngineError::Config(
+                "failed to open control stdin for game-runner".to_owned(),
+            ));
+        }
+
+        self.play_mode.status = PlayStatus::Playing;
+        self.play_mode.child = Some(child);
+        self.play_mode.snapshot_scene_path = Some(snapshot_path.clone());
+
+        self.log_message(
+            LogLevel::Info,
+            format!(
+                "Play Mode started using snapshot {}",
+                snapshot_path.display()
+            ),
+        );
+
+        Ok(())
+    }
+
+    fn pause_play_mode(&mut self) -> Result<()> {
+        if self.play_mode.status != PlayStatus::Playing {
+            return Ok(());
+        }
+
+        self.send_runner_control_command(RUNNER_CONTROL_PAUSE)?;
+        self.play_mode.status = PlayStatus::Paused;
+        self.log_message(LogLevel::Info, "Play Mode paused");
+        Ok(())
+    }
+
+    fn resume_play_mode(&mut self) -> Result<()> {
+        if self.play_mode.status != PlayStatus::Paused {
+            return Ok(());
+        }
+
+        self.send_runner_control_command(RUNNER_CONTROL_RESUME)?;
+        self.play_mode.status = PlayStatus::Playing;
+        self.log_message(LogLevel::Info, "Play Mode resumed");
+        Ok(())
+    }
+
+    fn toggle_play_mode_pause(&mut self) -> Result<()> {
+        match self.play_mode.status {
+            PlayStatus::Stopped => Ok(()),
+            PlayStatus::Playing => self.pause_play_mode(),
+            PlayStatus::Paused => self.resume_play_mode(),
+        }
+    }
+
+    fn stop_play_mode(&mut self) {
+        if !self.play_mode.status.is_running() {
+            self.play_mode.status = PlayStatus::Stopped;
+            self.cleanup_play_mode_snapshot();
+            return;
+        }
+
+        if let Err(error) = self.send_runner_control_command(RUNNER_CONTROL_STOP) {
+            self.log_message(
+                LogLevel::Warn,
+                format!("Failed to send stop command to runner: {}", error),
+            );
+        }
+
+        if let Some(mut child) = self.play_mode.child.take() {
+            let exited_gracefully = match wait_for_child_exit_with_timeout(
+                &mut child,
+                PLAY_MODE_STOP_GRACE_PERIOD,
+                PLAY_MODE_STOP_POLL_INTERVAL,
+            ) {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
+                Err(error) => {
+                    self.log_message(
+                        LogLevel::Warn,
+                        format!("Failed to wait for graceful Play Mode shutdown: {}", error),
+                    );
+                    false
+                }
+            };
+
+            if !exited_gracefully {
+                if let Err(error) = child.kill() {
+                    if error.kind() != ErrorKind::InvalidInput {
+                        self.log_message(
+                            LogLevel::Warn,
+                            format!("Failed to terminate Play Mode runner process: {}", error),
+                        );
+                    }
+                }
+
+                if let Err(error) = child.wait() {
+                    if error.kind() != ErrorKind::InvalidInput {
+                        self.log_message(
+                            LogLevel::Warn,
+                            format!("Failed to reap Play Mode runner process: {}", error),
+                        );
+                    }
+                }
+            }
+        }
+
+        self.play_mode.status = PlayStatus::Stopped;
+        self.cleanup_play_mode_snapshot();
+        self.log_message(LogLevel::Info, "Play Mode stopped");
+    }
+
+    fn poll_play_mode_process(&mut self) {
+        let mut exited_status = None;
+
+        if let Some(child) = self.play_mode.child.as_mut() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    exited_status = Some(status);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.log_message(
+                        LogLevel::Warn,
+                        format!("Failed to poll Play Mode runner process: {}", error),
+                    );
+                }
+            }
+        }
+
+        if let Some(status) = exited_status {
+            self.play_mode.child = None;
+            self.play_mode.status = PlayStatus::Stopped;
+            self.cleanup_play_mode_snapshot();
+
+            if status.success() {
+                self.log_message(LogLevel::Info, "Play Mode process exited");
+            } else {
+                self.log_message(
+                    LogLevel::Warn,
+                    format!("Play Mode process exited with status {}", status),
+                );
+            }
+        }
+    }
+
+    fn draw_play_mode_controls(&mut self, ui: &mut egui::Ui) {
+        let play_or_stop_label = if self.play_mode.status.is_running() {
+            "Stop (F5)"
+        } else {
+            "Play (F5)"
+        };
+
+        if ui.button(play_or_stop_label).clicked() {
+            if self.play_mode.status.is_running() {
+                self.stop_play_mode();
+            } else if let Err(error) = self.start_play_mode() {
+                self.log_message(
+                    LogLevel::Error,
+                    format!("Play Mode start failed: {}", error),
+                );
+            }
+        }
+
+        let pause_resume_label = if self.play_mode.status == PlayStatus::Paused {
+            "Resume (F6)"
+        } else {
+            "Pause (F6)"
+        };
+
+        if ui
+            .add_enabled(
+                self.play_mode.status.is_running(),
+                egui::Button::new(pause_resume_label),
+            )
+            .clicked()
+        {
+            if let Err(error) = self.toggle_play_mode_pause() {
+                self.log_message(
+                    LogLevel::Error,
+                    format!("Play Mode pause/resume failed: {}", error),
+                );
+            }
+        }
     }
 
     fn editor_camera_from_config(config: &EditorConfig) -> EditorCamera {
@@ -2034,6 +2437,12 @@ impl EditorApp {
                         self.show_about = true;
                     }
                 });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(format!("Play: {}", self.play_mode.status.label()));
+                    ui.separator();
+                    self.draw_play_mode_controls(ui);
+                });
             });
         });
 
@@ -2055,6 +2464,8 @@ impl EditorApp {
         let mut duplicate_selected = false;
         let mut begin_rename = false;
         let mut clear_selection = false;
+        let mut play_toggle = false;
+        let mut pause_toggle = false;
 
         ctx.input_mut(|input| {
             new_scene = input.consume_shortcut(&egui::KeyboardShortcut::new(
@@ -2097,6 +2508,8 @@ impl EditorApp {
 
             delete_selected = input.key_pressed(egui::Key::Delete);
             begin_rename = input.key_pressed(egui::Key::F2);
+            play_toggle = input.key_pressed(egui::Key::F5);
+            pause_toggle = input.key_pressed(egui::Key::F6);
 
             clear_selection = input.key_pressed(egui::Key::Escape);
         });
@@ -2160,6 +2573,26 @@ impl EditorApp {
                 self.cancel_rename_entity();
             } else {
                 self.selection.deselect();
+            }
+        }
+
+        if play_toggle {
+            if self.play_mode.status.is_running() {
+                self.stop_play_mode();
+            } else if let Err(error) = self.start_play_mode() {
+                self.log_message(
+                    LogLevel::Error,
+                    format!("Play Mode start failed: {}", error),
+                );
+            }
+        }
+
+        if pause_toggle {
+            if let Err(error) = self.toggle_play_mode_pause() {
+                self.log_message(
+                    LogLevel::Error,
+                    format!("Play Mode pause/resume failed: {}", error),
+                );
             }
         }
     }
@@ -3168,6 +3601,8 @@ impl EditorApp {
 
                     let fps = 1.0 / ctx.input(|i| i.predicted_dt.max(0.0001));
                     ui.label(format!("FPS: {:.0}", fps));
+                    ui.separator();
+                    ui.label(format!("Play: {}", self.play_mode.status.label()));
                     ui.separator();
 
                     if let Some(path) = &self.file_path {
@@ -4289,6 +4724,8 @@ impl EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll_play_mode_process();
+
         let fs_events = self.asset_browser.process_file_events();
         if fs_events > 0 {
             self.log_message(
@@ -4337,6 +4774,8 @@ impl eframe::App for EditorApp {
 
 impl Drop for EditorApp {
     fn drop(&mut self) {
+        self.stop_play_mode();
+
         if let Some(render_state) = self.wgpu_render_state.as_ref() {
             self.viewport_renderer.free(render_state);
         }

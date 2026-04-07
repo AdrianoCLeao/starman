@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use eframe::egui;
@@ -5,11 +8,12 @@ use engine_core::{Children, EntityName, Parent, Transform};
 use engine_math::glam::{Quat, Vec3};
 
 use crate::app::{
-    apply_axis_constraint, asset_drop_entity_name, build_scene_tree_visibility_map,
-    collect_scene_tree_roots, compute_gizmo_axis_constraint, compute_gizmo_drag_intent,
-    compute_gizmo_drag_transform, cycle_gizmo_mode, gizmo_axis_constraint_label,
-    gizmo_drag_intent_label, gizmo_manual_axis_lock_label, gizmo_mode_label,
-    gizmo_orientation_label, is_scene_tree_descendant, ray_intersects_aabb, snap_scalar, snap_vec3,
+    apply_axis_constraint, asset_drop_entity_name, build_play_mode_snapshot_path,
+    build_scene_tree_visibility_map, collect_scene_tree_roots, compute_gizmo_axis_constraint,
+    compute_gizmo_drag_intent, compute_gizmo_drag_transform, cycle_gizmo_mode,
+    gizmo_axis_constraint_label, gizmo_drag_intent_label, gizmo_manual_axis_lock_label,
+    gizmo_mode_label, gizmo_orientation_label, is_scene_tree_descendant, ray_intersects_aabb,
+    runner_executable_candidates, select_runner_executable_path, snap_scalar, snap_vec3,
     toggle_gizmo_orientation, viewport_drop_position, viewport_pick_ray, GizmoAxisConstraint,
     GizmoDragIntent, GizmoMode, GizmoOrientation,
 };
@@ -32,6 +36,22 @@ fn attach_child(world: &mut World, parent: Entity, child: Entity) {
             parent_ref.insert(Children(vec![child]));
         }
     }
+}
+
+fn create_temp_test_dir(prefix: &str) -> PathBuf {
+    let timestamp_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    let path = std::env::temp_dir().join(format!(
+        "motley-editor-tests-{}-{}-{}",
+        prefix,
+        std::process::id(),
+        timestamp_nanos
+    ));
+
+    std::fs::create_dir_all(&path).expect("failed to create temporary test directory");
+    path
 }
 
 #[test]
@@ -795,4 +815,54 @@ fn gizmo_manual_axis_lock_label_maps_to_user_facing_names() {
         gizmo_manual_axis_lock_label(Some(GizmoAxisConstraint::AxisZ)),
         "Z"
     );
+}
+
+#[test]
+fn build_play_mode_snapshot_path_changes_with_sequence_suffix() {
+    let temp_root = PathBuf::from("C:/tmp");
+    let process_id = 1234;
+    let timestamp_nanos = 987_654_321_u128;
+
+    let first = build_play_mode_snapshot_path(&temp_root, process_id, timestamp_nanos, 0);
+    let second = build_play_mode_snapshot_path(&temp_root, process_id, timestamp_nanos, 1);
+
+    assert_ne!(first, second);
+    assert!(first
+        .to_string_lossy()
+        .contains("scene-1234-987654321-0.scene.ron"));
+    assert!(second
+        .to_string_lossy()
+        .contains("scene-1234-987654321-1.scene.ron"));
+}
+
+#[test]
+fn runner_executable_candidates_include_hyphen_and_underscore_names() {
+    let base = PathBuf::from("C:/runner");
+    let candidates = runner_executable_candidates(&base);
+
+    let first = candidates[0].to_string_lossy();
+    let second = candidates[1].to_string_lossy();
+
+    assert!(first.contains(&format!("game-runner{}", std::env::consts::EXE_SUFFIX)));
+    assert!(second.contains(&format!("game_runner{}", std::env::consts::EXE_SUFFIX)));
+}
+
+#[test]
+fn select_runner_executable_path_prefers_hyphenated_binary_then_fallback() {
+    let temp_dir = create_temp_test_dir("runner-selection");
+    let candidates = runner_executable_candidates(&temp_dir);
+    let hyphen = candidates[0].clone();
+    let underscore = candidates[1].clone();
+
+    std::fs::write(&underscore, b"binary").expect("failed to create underscore runner file");
+    let selected_without_hyphen =
+        select_runner_executable_path(&temp_dir).expect("expected underscore fallback candidate");
+    assert_eq!(selected_without_hyphen, underscore);
+
+    std::fs::write(&hyphen, b"binary").expect("failed to create hyphen runner file");
+    let selected_with_hyphen =
+        select_runner_executable_path(&temp_dir).expect("expected hyphenated candidate");
+    assert_eq!(selected_with_hyphen, hyphen);
+
+    let _ = std::fs::remove_dir_all(temp_dir);
 }
