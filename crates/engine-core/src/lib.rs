@@ -27,9 +27,7 @@ pub use winit::event::WindowEvent;
 pub use winit::window::Window;
 
 use bevy_ecs::{schedule::IntoSystemConfigs, system::Resource, world::World};
-use std::sync::{Arc, Once};
-
-static LOGGER_INIT: Once = Once::new();
+use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
@@ -352,12 +350,9 @@ impl<M: EngineModules> WindowLoop for Engine<M> {
 }
 
 pub fn init_logging() {
-    LOGGER_INIT.call_once(|| {
-        let mut builder =
-            env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
-        builder.format_timestamp_millis();
-        let _ = builder.try_init();
-    });
+    let _ = engine_diagnostics::initialize(engine_diagnostics::DiagnosticsConfig::for_application(
+        engine_name(),
+    ));
 }
 
 pub fn engine_name() -> &'static str {

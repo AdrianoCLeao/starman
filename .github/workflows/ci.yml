@@ -3,55 +3,134 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
+  format:
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Linux native dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libasound2-dev libudev-dev
-
-      - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+        # dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: 1.94.1
+          components: rustfmt
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Run tests
-        run: cargo test --workspace
-
-  build-cross:
+  quality:
+    needs: format
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - name: ubuntu-24.04-x64-vulkan
+            os: ubuntu-24.04
+            backend: vulkan
+            smoke_flags: ""
+          - name: windows-2025-x64-dx12-warp
+            os: windows-2025
+            backend: dx12
+            smoke_flags: "--fallback"
+          - name: macos-15-intel-metal
+            os: macos-15-intel
+            backend: metal
+            smoke_flags: ""
+          - name: macos-15-arm64-metal
+            os: macos-15
+            backend: metal
+            smoke_flags: ""
+    name: quality / ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        # actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        # dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: 1.94.1
+          components: clippy,rust-src
 
       - name: Install Linux native dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libasound2-dev libudev-dev
+          sudo apt-get install -y pkg-config libasound2-dev libudev-dev mesa-vulkan-drivers vulkan-tools
 
       - name: Cache cargo artifacts
-        uses: Swatinem/rust-cache@v2
+        # Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c
 
-      - name: Build workspace
-        run: cargo build --workspace
+      - name: Check workspace
+        run: cargo check --workspace --all-targets
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace --all-targets --all-features
+
+      - name: Build docs
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --no-deps --all-features
+
+      - name: Run headless smoke
+        shell: bash
+        run: |
+          mkdir -p target/smoke
+          cargo run -p engine-smoke -- --backend "${{ matrix.backend }}" ${{ matrix.smoke_flags }} --report "target/smoke/${{ matrix.name }}.json"
+
+      - name: Upload smoke report
+        if: always()
+        # actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: smoke-${{ matrix.name }}
+          path: target/smoke/*.json
+          if-no-files-found: ignore
+
+  benchmarks:
+    needs: quality
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        # actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Setup Rust toolchain
+        # dtolnay/rust-toolchain@master
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: 1.94.1
+
+      - name: Install Linux native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libasound2-dev libudev-dev mesa-vulkan-drivers
+
+      - name: Cache cargo artifacts
+        # Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c
+
+      - name: Compile benchmarks
+        run: cargo bench -p engine-benchmarks --bench baseline --no-run

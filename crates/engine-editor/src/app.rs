@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
-use std::io::ErrorKind;
-use std::io::Write;
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStderr, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::sync::Arc;
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bevy_ecs::entity::Entity;
@@ -21,6 +23,7 @@ use engine_core::{
     EngineError, EntityName, GlobalTransform, Parent, PrimaryCamera, RenderLayer2D, RenderLayer3D,
     Result, SpatialBundle, Transform, Visible,
 };
+use engine_diagnostics::{DiagnosticEvent, DiagnosticLevel};
 use engine_math::glam::{Affine3A, Quat, Vec3};
 use engine_math::Mat4;
 use engine_physics::{
@@ -52,6 +55,7 @@ const RUNNER_CONTROL_RESUME: &str = "resume";
 const RUNNER_CONTROL_STOP: &str = "stop";
 const PLAY_MODE_STOP_GRACE_PERIOD: Duration = Duration::from_millis(250);
 const PLAY_MODE_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const PLAY_MODE_OUTPUT_CHANNEL_CAPACITY: usize = 4096;
 
 static PLAY_MODE_SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -115,6 +119,82 @@ fn wait_for_child_exit_with_timeout(
     }
 }
 
+fn spawn_play_mode_output_readers(
+    stdout: Option<ChildStdout>,
+    stderr: Option<ChildStderr>,
+    started_at: Instant,
+) -> Option<PlayModeOutputReaders> {
+    let (tx, receiver) = mpsc::sync_channel::<LogEntry>(PLAY_MODE_OUTPUT_CHANNEL_CAPACITY);
+    let mut threads = Vec::new();
+    let dropped_entries = Arc::new(AtomicU64::new(0));
+
+    if let Some(stdout) = stdout {
+        let tx = tx.clone();
+        let dropped_entries = dropped_entries.clone();
+        threads.push(std::thread::spawn(move || {
+            read_play_mode_output(stdout, "engine::runner", tx, dropped_entries, started_at);
+        }));
+    }
+
+    if let Some(stderr) = stderr {
+        let dropped_entries = dropped_entries.clone();
+        threads.push(std::thread::spawn(move || {
+            read_play_mode_output(
+                stderr,
+                "engine::runner::stderr",
+                tx,
+                dropped_entries,
+                started_at,
+            );
+        }));
+    }
+
+    if threads.is_empty() {
+        None
+    } else {
+        Some(PlayModeOutputReaders {
+            receiver,
+            threads,
+            dropped_entries,
+        })
+    }
+}
+
+pub(crate) fn read_play_mode_output<R: std::io::Read + Send + 'static>(
+    output: R,
+    fallback_module: &'static str,
+    sender: SyncSender<LogEntry>,
+    dropped_entries: Arc<AtomicU64>,
+    started_at: Instant,
+) {
+    let reader = BufReader::new(output);
+    for line in reader.lines() {
+        let Ok(line) = line else {
+            break;
+        };
+        let timestamp = started_at.elapsed().as_secs_f64();
+        let entry = match engine_diagnostics::event_from_json_line(&line) {
+            Ok(event) => LogEntry::from_diagnostic_event(event, timestamp),
+            Err(_) => LogEntry {
+                level: LogLevel::Warn,
+                message: line,
+                timestamp,
+                module: fallback_module.to_owned(),
+            },
+        };
+
+        match sender.try_send(entry) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                dropped_entries.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                break;
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PlayStatus {
     Stopped,
@@ -140,6 +220,7 @@ struct PlayModeState {
     status: PlayStatus,
     child: Option<Child>,
     snapshot_scene_path: Option<PathBuf>,
+    output_readers: Option<PlayModeOutputReaders>,
 }
 
 impl Default for PlayModeState {
@@ -148,24 +229,63 @@ impl Default for PlayModeState {
             status: PlayStatus::Stopped,
             child: None,
             snapshot_scene_path: None,
+            output_readers: None,
+        }
+    }
+}
+
+struct PlayModeOutputReaders {
+    receiver: Receiver<LogEntry>,
+    threads: Vec<JoinHandle<()>>,
+    dropped_entries: Arc<AtomicU64>,
+}
+
+impl PlayModeOutputReaders {
+    fn join(self) {
+        for thread in self.threads {
+            let _ = thread.join();
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum LogLevel {
+pub(crate) enum LogLevel {
     Trace,
+    Debug,
     Info,
     Warn,
     Error,
 }
 
 #[derive(Clone, Debug)]
-struct LogEntry {
-    level: LogLevel,
-    message: String,
-    timestamp: f64,
-    module: String,
+pub(crate) struct LogEntry {
+    pub(crate) level: LogLevel,
+    pub(crate) message: String,
+    pub(crate) timestamp: f64,
+    pub(crate) module: String,
+}
+
+impl LogEntry {
+    fn from_diagnostic_event(event: DiagnosticEvent, timestamp: f64) -> Self {
+        Self {
+            level: LogLevel::from_diagnostic_level(event.level),
+            message: event.message,
+            timestamp,
+            module: event.target,
+        }
+    }
+}
+
+impl LogLevel {
+    fn from_diagnostic_level(level: DiagnosticLevel) -> Self {
+        match level {
+            DiagnosticLevel::Trace => Self::Trace,
+            DiagnosticLevel::Debug => Self::Debug,
+            DiagnosticLevel::Info => Self::Info,
+            DiagnosticLevel::Warn => Self::Warn,
+            DiagnosticLevel::Error => Self::Error,
+        }
+    }
 }
 
 enum SceneTreeAction {
@@ -573,6 +693,9 @@ struct ConsolePanel {
     entries: Vec<LogEntry>,
     filter: LogLevel,
     auto_scroll: bool,
+    diagnostics_cursor: u64,
+    dropped_events_seen: u64,
+    runner_dropped_entries_seen: u64,
 }
 
 impl Default for ConsolePanel {
@@ -581,6 +704,9 @@ impl Default for ConsolePanel {
             entries: Vec::new(),
             filter: LogLevel::Trace,
             auto_scroll: true,
+            diagnostics_cursor: engine_diagnostics::current_cursor(),
+            dropped_events_seen: 0,
+            runner_dropped_entries_seen: 0,
         }
     }
 }
@@ -607,10 +733,55 @@ impl ConsolePanel {
         }
     }
 
+    fn drain_diagnostics(&mut self, now_seconds: f64) {
+        let recent = engine_diagnostics::recent_events_after(self.diagnostics_cursor);
+
+        if recent.dropped_events > self.dropped_events_seen {
+            let dropped = recent.dropped_events - self.dropped_events_seen;
+            self.push(
+                LogLevel::Warn,
+                format!("Diagnostics ring dropped {dropped} old event(s)"),
+                "engine::diagnostics",
+                now_seconds,
+            );
+            self.dropped_events_seen = recent.dropped_events;
+        }
+
+        for event in recent.events {
+            self.push(
+                LogLevel::from_diagnostic_level(event.level),
+                event.message,
+                event.target,
+                now_seconds,
+            );
+        }
+
+        self.diagnostics_cursor = recent.next_cursor;
+    }
+
+    fn drain_runner_output(&mut self, output: &PlayModeOutputReaders, now_seconds: f64) {
+        while let Ok(entry) = output.receiver.try_recv() {
+            self.push(entry.level, entry.message, entry.module, entry.timestamp);
+        }
+
+        let dropped = output.dropped_entries.load(Ordering::Relaxed);
+        if dropped > self.runner_dropped_entries_seen {
+            let new_dropped = dropped - self.runner_dropped_entries_seen;
+            self.runner_dropped_entries_seen = dropped;
+            self.push(
+                LogLevel::Warn,
+                format!("Play Mode output dropped {new_dropped} old line(s)"),
+                "engine::runner",
+                now_seconds,
+            );
+        }
+    }
+
     fn show(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("Filter:");
             ui.selectable_value(&mut self.filter, LogLevel::Trace, "All");
+            ui.selectable_value(&mut self.filter, LogLevel::Debug, "Debug+");
             ui.selectable_value(&mut self.filter, LogLevel::Info, "Info+");
             ui.selectable_value(&mut self.filter, LogLevel::Warn, "Warn+");
             ui.selectable_value(&mut self.filter, LogLevel::Error, "Error");
@@ -636,6 +807,7 @@ impl ConsolePanel {
                         LogLevel::Error => egui::Color32::RED,
                         LogLevel::Warn => egui::Color32::YELLOW,
                         LogLevel::Info => egui::Color32::WHITE,
+                        LogLevel::Debug => egui::Color32::LIGHT_GRAY,
                         LogLevel::Trace => egui::Color32::GRAY,
                     };
 
@@ -847,11 +1019,11 @@ impl EditorApp {
             .arg(&snapshot_path)
             .arg(&assets_root_arg)
             .stdin(Stdio::piped())
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn();
 
-        let child = match child_result {
+        let mut child = match child_result {
             Ok(child) => child,
             Err(error) => {
                 let _ = std::fs::remove_file(&snapshot_path);
@@ -870,8 +1042,15 @@ impl EditorApp {
             ));
         }
 
+        let output_readers = spawn_play_mode_output_readers(
+            child.stdout.take(),
+            child.stderr.take(),
+            self.started_at,
+        );
+
         self.play_mode.status = PlayStatus::Playing;
         self.play_mode.child = Some(child);
+        self.play_mode.output_readers = output_readers;
         self.play_mode.snapshot_scene_path = Some(snapshot_path.clone());
 
         self.log_message(
@@ -967,6 +1146,10 @@ impl EditorApp {
             }
         }
 
+        if let Some(output_readers) = self.play_mode.output_readers.take() {
+            output_readers.join();
+        }
+
         self.play_mode.status = PlayStatus::Stopped;
         self.cleanup_play_mode_snapshot();
         self.log_message(LogLevel::Info, "Play Mode stopped");
@@ -994,6 +1177,9 @@ impl EditorApp {
             self.play_mode.child = None;
             self.play_mode.status = PlayStatus::Stopped;
             self.cleanup_play_mode_snapshot();
+            if let Some(output_readers) = self.play_mode.output_readers.take() {
+                output_readers.join();
+            }
 
             if status.success() {
                 self.log_message(LogLevel::Info, "Play Mode process exited");
@@ -1092,9 +1278,27 @@ impl EditorApp {
     }
 
     fn log_message(&mut self, level: LogLevel, message: impl Into<String>) {
-        let timestamp = self.now_seconds();
-        self.console
-            .push(level, message.into(), "engine::editor", timestamp);
+        let message = message.into();
+        if engine_diagnostics::global_handle().is_some() {
+            match level {
+                LogLevel::Trace => log::trace!(target: "engine::editor", "{}", message),
+                LogLevel::Debug => log::debug!(target: "engine::editor", "{}", message),
+                LogLevel::Info => log::info!(target: "engine::editor", "{}", message),
+                LogLevel::Warn => log::warn!(target: "engine::editor", "{}", message),
+                LogLevel::Error => log::error!(target: "engine::editor", "{}", message),
+            }
+        } else {
+            let timestamp = self.now_seconds();
+            self.console
+                .push(level, message, "engine::editor", timestamp);
+        }
+    }
+
+    fn drain_play_mode_output(&mut self) {
+        if let Some(output_readers) = &self.play_mode.output_readers {
+            self.console
+                .drain_runner_output(output_readers, self.now_seconds());
+        }
     }
 
     fn sync_config_from_runtime(&mut self) {
@@ -4499,7 +4703,9 @@ impl EditorApp {
 
         if let Some((level, message)) = self.asset_browser_ops.feedback.as_ref() {
             let color = match level {
-                LogLevel::Trace | LogLevel::Info => egui::Color32::from_rgb(140, 210, 140),
+                LogLevel::Trace | LogLevel::Debug | LogLevel::Info => {
+                    egui::Color32::from_rgb(140, 210, 140)
+                }
                 LogLevel::Warn => egui::Color32::from_rgb(235, 190, 120),
                 LogLevel::Error => egui::Color32::from_rgb(230, 120, 120),
             };
@@ -4718,12 +4924,16 @@ impl EditorApp {
     }
 
     fn show_console_panel(&mut self, ui: &mut egui::Ui) {
+        self.console.drain_diagnostics(self.now_seconds());
+        self.drain_play_mode_output();
         self.console.show(ui);
     }
 }
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.console.drain_diagnostics(self.now_seconds());
+        self.drain_play_mode_output();
         self.poll_play_mode_process();
 
         let fs_events = self.asset_browser.process_file_events();

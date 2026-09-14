@@ -1,21 +1,18 @@
 [package]
-name = "sandbox"
+name = "engine-smoke"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
 [dependencies]
-bevy_ecs.workspace = true
 engine-assets = { path = "../../crates/engine-assets" }
-engine-audio = { path = "../../crates/engine-audio" }
 engine-core = { path = "../../crates/engine-core" }
 engine-diagnostics = { path = "../../crates/engine-diagnostics" }
 engine-input = { path = "../../crates/engine-input" }
-engine-math = { path = "../../crates/engine-math" }
 engine-physics = { path = "../../crates/engine-physics" }
-engine-reflect = { path = "../../crates/engine-reflect" }
 engine-render = { path = "../../crates/engine-render" }
-gilrs.workspace = true
-log.workspace = true
-winit.workspace = true
+pollster = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+wgpu.workspace = true

@@ -1,7 +1,9 @@
 use engine_editor::EditorApp;
 
 fn main() {
-    engine_core::init_logging();
+    let _ = engine_diagnostics::initialize(engine_diagnostics::DiagnosticsConfig::for_application(
+        "starman-editor",
+    ));
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

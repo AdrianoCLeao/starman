@@ -362,7 +362,9 @@ fn run() -> Result<()> {
 }
 
 fn main() {
-    engine_core::init_logging();
+    let _ = engine_diagnostics::initialize(
+        engine_diagnostics::DiagnosticsConfig::for_application("game-runner").json_stdout(true),
+    );
 
     if let Err(error) = run() {
         log::error!(target: "engine::runner", "Startup failed: {}", error);

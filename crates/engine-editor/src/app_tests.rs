@@ -1,10 +1,14 @@
 use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
+use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use eframe::egui;
 use engine_core::{Children, EntityName, Parent, Transform};
+use engine_diagnostics::{DiagnosticEvent, DiagnosticLevel};
 use engine_math::glam::{Quat, Vec3};
 
 use crate::app::{
@@ -13,9 +17,9 @@ use crate::app::{
     compute_gizmo_drag_intent, compute_gizmo_drag_transform, cycle_gizmo_mode,
     gizmo_axis_constraint_label, gizmo_drag_intent_label, gizmo_manual_axis_lock_label,
     gizmo_mode_label, gizmo_orientation_label, is_scene_tree_descendant, ray_intersects_aabb,
-    runner_executable_candidates, select_runner_executable_path, snap_scalar, snap_vec3,
-    toggle_gizmo_orientation, viewport_drop_position, viewport_pick_ray, GizmoAxisConstraint,
-    GizmoDragIntent, GizmoMode, GizmoOrientation,
+    read_play_mode_output, runner_executable_candidates, select_runner_executable_path,
+    snap_scalar, snap_vec3, toggle_gizmo_orientation, viewport_drop_position, viewport_pick_ray,
+    GizmoAxisConstraint, GizmoDragIntent, GizmoMode, GizmoOrientation, LogLevel,
 };
 
 fn quat_is_close(lhs: Quat, rhs: Quat, epsilon: f32) -> bool {
@@ -52,6 +56,52 @@ fn create_temp_test_dir(prefix: &str) -> PathBuf {
 
     std::fs::create_dir_all(&path).expect("failed to create temporary test directory");
     path
+}
+
+#[test]
+fn play_mode_output_parses_diagnostic_json_lines() {
+    let (tx, rx) = mpsc::sync_channel(1);
+    let event = DiagnosticEvent {
+        sequence: 7,
+        timestamp_millis: 1000,
+        level: DiagnosticLevel::Info,
+        target: "engine::runner".to_owned(),
+        message: "scene loaded".to_owned(),
+        fields: Default::default(),
+        thread: None,
+    };
+    let line = engine_diagnostics::event_to_json_line(&event).expect("event should serialize");
+
+    read_play_mode_output(
+        std::io::Cursor::new(format!("{line}\n").into_bytes()),
+        "fallback",
+        tx,
+        Arc::new(AtomicU64::new(0)),
+        std::time::Instant::now(),
+    );
+
+    let entry = rx.recv().expect("reader should emit a log entry");
+    assert_eq!(entry.level, LogLevel::Info);
+    assert_eq!(entry.module, "engine::runner");
+    assert_eq!(entry.message, "scene loaded");
+}
+
+#[test]
+fn play_mode_output_wraps_unstructured_lines_as_warnings() {
+    let (tx, rx) = mpsc::sync_channel(1);
+
+    read_play_mode_output(
+        std::io::Cursor::new(b"panic at startup\n".to_vec()),
+        "engine::runner::stderr",
+        tx,
+        Arc::new(AtomicU64::new(0)),
+        std::time::Instant::now(),
+    );
+
+    let entry = rx.recv().expect("reader should emit a log entry");
+    assert_eq!(entry.level, LogLevel::Warn);
+    assert_eq!(entry.module, "engine::runner::stderr");
+    assert_eq!(entry.message, "panic at startup");
 }
 
 #[test]

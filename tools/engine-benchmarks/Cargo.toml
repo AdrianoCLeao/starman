@@ -1,0 +1,21 @@
+[package]
+name = "engine-benchmarks"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bench]]
+name = "baseline"
+harness = false
+
+[dev-dependencies]
+bevy_ecs.workspace = true
+criterion.workspace = true
+engine-assets = { path = "../../crates/engine-assets" }
+engine-core = { path = "../../crates/engine-core" }
+engine-math = { path = "../../crates/engine-math" }

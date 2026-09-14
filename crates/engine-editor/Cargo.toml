@@ -9,6 +9,7 @@ license.workspace = true
 bevy_ecs.workspace = true
 engine-assets = { path = "../engine-assets" }
 engine-core = { path = "../engine-core" }
+engine-diagnostics = { path = "../engine-diagnostics" }
 engine-math = { path = "../engine-math" }
 engine-physics = { path = "../engine-physics" }
 engine-render = { path = "../engine-render" }
@@ -27,4 +28,3 @@ image.workspace = true
 gltf.workspace = true
 
 log.workspace = true
-env_logger.workspace = true
