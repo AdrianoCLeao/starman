@@ -15,8 +15,8 @@ use bevy_ecs::world::World;
 use eframe::egui;
 use egui_dock::{DockArea, DockState, TabViewer};
 use engine_assets::{
-    AssetServer, MaterialHandle, MeshData, MeshHandle, SceneDeserializer, SceneSerializer,
-    TextureHandle,
+    AssetServer, MaterialHandle, MeshData, MeshHandle, SceneDeserializer, SceneFile,
+    SceneSerializer, TextureHandle,
 };
 use engine_core::{
     create_world, register_core_reflection_types, Camera2d, Camera3d, Children, EditorEntityBundle,
@@ -352,7 +352,8 @@ impl NewAssetTemplate {
                     .unwrap_or("new.scene");
 
                 format!(
-                    "(\n    version: 1,\n    name: \"{}\",\n    entities: [],\n)\n",
+                    "(\n    version: {},\n    name: \"{}\",\n    entities: [],\n)\n",
+                    SceneFile::CURRENT_VERSION,
                     scene_name
                 )
             }

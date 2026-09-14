@@ -1,8 +1,9 @@
 (
-    version: 1,
+    version: 2,
     name: "example.scene",
     entities: [
         (
+            id: "dd53e8ca-f301-4bd0-8c16-c52ba7a41866",
             name: Some("Main Camera"),
             components: {
                 "Camera3d": {
@@ -35,6 +36,7 @@
             children: [],
         ),
         (
+            id: "09c123ca-f419-4eca-a63f-ec40975945fd",
             name: Some("Ground"),
             components: {
                 "ColliderShape3D": {
@@ -75,6 +77,7 @@
             children: [],
         ),
         (
+            id: "825a6b16-27bc-433d-a463-925f87b9dde3",
             name: Some("Preview Cube"),
             components: {
                 "MeshRenderer": {

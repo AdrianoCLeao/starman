@@ -7,7 +7,9 @@ use bevy_ecs::world::World;
 use engine_assets::{
     AssetServer, SceneDeserializer, SceneEntityData, SceneFile, SceneSerializer, SceneValue,
 };
-use engine_core::{register_core_reflection_types, Children, EntityName, Parent, Transform};
+use engine_core::{
+    register_core_reflection_types, Children, EntityId, EntityName, Parent, PersistentId, Transform,
+};
 use engine_physics::{
     register_physics_reflection_types, ColliderShape3D, PhysicsMaterial, RigidBodyType,
 };
@@ -130,6 +132,7 @@ fn scene_deserializer_skips_unknown_components() {
         version: SceneFile::CURRENT_VERSION,
         name: "UnknownComponent".to_owned(),
         entities: vec![SceneEntityData {
+            id: EntityId::new_v4(),
             name: Some("OnlyEntity".to_owned()),
             components: HashMap::new(),
             children: Vec::new(),
@@ -192,10 +195,11 @@ fn scene_load_file_accepts_handwritten_ron() {
 
     let scene_path = unique_temp_path("starman-handwritten");
     let source = r#"(
-    version: 1,
+    version: 2,
     name: "HandwrittenScene",
     entities: [
         (
+            id: "5c0a9c2e-4b8a-4c2a-9c9a-9c9a9c9a9c9a",
             name: Some("ManualRoot"),
             components: {
                 "Transform": {
@@ -234,6 +238,14 @@ fn scene_load_file_accepts_handwritten_ron() {
         .get::<Transform>(roots[0])
         .expect("root should include transform");
     assert_eq!(transform.translation, [1.0, 2.0, 3.0].into());
+
+    let persistent_id = world
+        .get::<PersistentId>(roots[0])
+        .expect("root should carry the persisted entity id");
+    assert_eq!(
+        persistent_id.0.to_string(),
+        "5c0a9c2e-4b8a-4c2a-9c9a-9c9a9c9a9c9a"
+    );
 
     let _ = fs::remove_file(scene_path);
 }
