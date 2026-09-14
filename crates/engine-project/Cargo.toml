@@ -1,0 +1,13 @@
+[package]
+name = "engine-project"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+engine-assets = { path = "../engine-assets" }
+engine-core = { path = "../engine-core" }
+log.workspace = true
+ron.workspace = true
+serde.workspace = true
