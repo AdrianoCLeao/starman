@@ -14,6 +14,14 @@ pub enum EngineError {
     Audio(String),
     #[error("Windowing error: {0}")]
     Window(String),
+    #[error("Invalid {kind} '{value}': {reason}")]
+    InvalidId {
+        kind: &'static str,
+        value: String,
+        reason: String,
+    },
+    #[error("Invalid project at '{path}': {reason}")]
+    InvalidProject { path: String, reason: String },
 }
 
 pub type Result<T> = std::result::Result<T, EngineError>;
