@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 bevy_ecs.workspace = true
+blake3.workspace = true
 engine-core = { path = "../engine-core" }
 engine-reflect = { path = "../engine-reflect" }
 gltf.workspace = true
@@ -19,3 +20,4 @@ serde.workspace = true
 
 [dev-dependencies]
 engine-physics = { path = "../engine-physics" }
+

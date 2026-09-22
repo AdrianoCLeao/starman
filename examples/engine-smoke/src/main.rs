@@ -237,7 +237,7 @@ async fn run_smoke(
         .checks
         .push(check("physics", true, "physics world constructed"));
 
-    let mut assets = engine_assets::AssetServer::new("assets");
+    let mut assets = engine_assets::AssetServer::new("examples/reference-project/assets");
     let _ = assets
         .load_texture_handle("textures/placeholder.png")
         .map_err(|error| SmokeError::Integration(format!("texture load failed: {error}")))?;

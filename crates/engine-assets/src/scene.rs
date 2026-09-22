@@ -4,7 +4,7 @@ use std::path::Path;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_core::{Children, EngineError, EntityName, Parent, Result};
+use engine_core::{Children, EngineError, EntityId, EntityName, Parent, PersistentId, Result};
 use engine_reflect::bevy_reflect::{
     DynamicEnum, DynamicStruct, DynamicTuple, PartialReflect, ReflectMut, ReflectRef, VariantType,
 };
@@ -14,6 +14,8 @@ use engine_reflect::{
 use serde::{Deserialize, Serialize};
 
 use crate::AssetServer;
+
+mod migration;
 
 pub type SceneValue = ron::Value;
 pub type SceneEntityData = EntityData;
@@ -26,11 +28,31 @@ pub struct SceneFile {
 }
 
 impl SceneFile {
-    pub const CURRENT_VERSION: u32 = 1;
+    /// Scene format version 2: entities carry a stable [`EntityId`] (ADR
+    /// 0002). Version 1 files are migrated automatically on load, with a
+    /// backup preserved next to the original file (ADR 0006).
+    pub const CURRENT_VERSION: u32 = 2;
+
+    /// Builds an empty, valid, current-version scene (no entities). Useful
+    /// for scaffolding a project's entry scene on creation.
+    pub fn empty(name: impl Into<String>) -> Self {
+        Self {
+            version: Self::CURRENT_VERSION,
+            name: name.into(),
+            entities: Vec::new(),
+        }
+    }
+
+    /// Writes this scene to `path` using the same canonical, deterministic
+    /// RON rendering as [`SceneSerializer::save_file`].
+    pub fn write_to(&self, path: &Path) -> Result<()> {
+        write_scene_ron(path, self)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct EntityData {
+    pub id: EntityId,
     pub name: Option<String>,
     pub components: HashMap<String, SceneValue>,
     pub children: Vec<EntityData>,
@@ -45,6 +67,7 @@ struct StableSceneFile {
 
 #[derive(Serialize)]
 struct StableEntityData {
+    id: EntityId,
     name: Option<String>,
     components: BTreeMap<String, SceneValue>,
     children: Vec<StableEntityData>,
@@ -122,13 +145,13 @@ impl<'w, 'a> SceneSerializer<'w, 'a> {
     pub fn serialize_world(&self, scene_name: &str) -> Result<SceneFile> {
         let mut root_entities = Vec::new();
 
-        for entity_ref in self.world.iter_entities() {
+        for (index, entity_ref) in self.world.iter_entities().enumerate() {
             let entity = entity_ref.id();
             if entity_ref.get::<Parent>().is_some() {
                 continue;
             }
 
-            root_entities.push(self.serialize_entity(entity)?);
+            root_entities.push(self.serialize_entity(entity, &index.to_string())?);
         }
 
         Ok(SceneFile {
@@ -140,24 +163,11 @@ impl<'w, 'a> SceneSerializer<'w, 'a> {
 
     pub fn save_file(&self, path: &Path, scene_name: &str) -> Result<SceneFile> {
         let scene = self.serialize_world(scene_name)?;
-        let stable_scene = to_stable_scene_file(&scene);
-        let pretty = ron::ser::PrettyConfig::default();
-        let serialized = ron::ser::to_string_pretty(&stable_scene, pretty).map_err(|error| {
-            EngineError::AssetLoad {
-                path: path.display().to_string(),
-                reason: format!("failed to serialize scene: {error}"),
-            }
-        })?;
-
-        fs::write(path, serialized).map_err(|error| EngineError::AssetLoad {
-            path: path.display().to_string(),
-            reason: error.to_string(),
-        })?;
-
+        write_scene_ron(path, &scene)?;
         Ok(scene)
     }
 
-    fn serialize_entity(&self, entity: Entity) -> Result<EntityData> {
+    fn serialize_entity(&self, entity: Entity, path: &str) -> Result<EntityData> {
         let mut components = HashMap::new();
 
         for descriptor in self.component_registry.all() {
@@ -215,18 +225,45 @@ impl<'w, 'a> SceneSerializer<'w, 'a> {
                     .0
                     .iter()
                     .copied()
-                    .map(|child| self.serialize_entity(child))
+                    .enumerate()
+                    .map(|(index, child)| self.serialize_entity(child, &format!("{path}/{index}")))
                     .collect::<Result<Vec<_>>>()
             })
             .transpose()?
             .unwrap_or_default();
 
+        let id = self
+            .world
+            .get::<PersistentId>(entity)
+            .map(|persistent_id| persistent_id.0)
+            .unwrap_or_else(|| EntityId::deterministic_fallback(path));
+
         Ok(EntityData {
+            id,
             name,
             components,
             children,
         })
     }
+}
+
+/// Renders a scene as the canonical, deterministically-ordered RON
+/// representation and writes it to `path`. Shared by [`SceneSerializer`] and
+/// scene migration so both produce byte-identical output for the same data.
+fn write_scene_ron(path: &Path, scene: &SceneFile) -> Result<()> {
+    let stable_scene = to_stable_scene_file(scene);
+    let pretty = ron::ser::PrettyConfig::default();
+    let serialized = ron::ser::to_string_pretty(&stable_scene, pretty).map_err(|error| {
+        EngineError::AssetLoad {
+            path: path.display().to_string(),
+            reason: format!("failed to serialize scene: {error}"),
+        }
+    })?;
+
+    fs::write(path, serialized).map_err(|error| EngineError::AssetLoad {
+        path: path.display().to_string(),
+        reason: error.to_string(),
+    })
 }
 
 pub struct SceneDeserializer<'w, 'a> {
@@ -267,10 +304,35 @@ impl<'w, 'a> SceneDeserializer<'w, 'a> {
             reason: error.to_string(),
         })?;
 
-        let scene: SceneFile = ron::from_str(&source).map_err(|error| EngineError::AssetLoad {
-            path: path.display().to_string(),
-            reason: format!("failed to parse scene file: {error}"),
-        })?;
+        let probe: migration::VersionProbe =
+            ron::from_str(&source).map_err(|error| EngineError::AssetLoad {
+                path: path.display().to_string(),
+                reason: format!("failed to parse scene file: {error}"),
+            })?;
+
+        let scene = if probe.version == SceneFile::CURRENT_VERSION {
+            ron::from_str::<SceneFile>(&source).map_err(|error| EngineError::AssetLoad {
+                path: path.display().to_string(),
+                reason: format!("failed to parse scene file: {error}"),
+            })?
+        } else if probe.version == migration::LEGACY_VERSION_V1 {
+            let legacy: migration::LegacySceneFileV1 =
+                ron::from_str(&source).map_err(|error| EngineError::AssetLoad {
+                    path: path.display().to_string(),
+                    reason: format!("failed to parse legacy (v1) scene file: {error}"),
+                })?;
+            migration::migrate_and_persist(path, &source, legacy)?
+        } else {
+            return Err(EngineError::AssetLoad {
+                path: path.display().to_string(),
+                reason: format!(
+                    "unsupported scene version {}; expected {} (or {} for automatic migration)",
+                    probe.version,
+                    SceneFile::CURRENT_VERSION,
+                    migration::LEGACY_VERSION_V1
+                ),
+            });
+        };
 
         self.load_scene(&scene)
     }
@@ -301,6 +363,10 @@ impl<'w, 'a> SceneDeserializer<'w, 'a> {
         parent: Option<Entity>,
     ) -> Result<Entity> {
         let entity = self.world.spawn_empty().id();
+
+        if let Ok(mut entity_ref) = self.world.get_entity_mut(entity) {
+            entity_ref.insert(PersistentId(data.id));
+        }
 
         if let Some(name) = &data.name {
             if let Ok(mut entity_ref) = self.world.get_entity_mut(entity) {
@@ -909,6 +975,7 @@ fn to_stable_scene_file(scene: &SceneFile) -> StableSceneFile {
 
 fn to_stable_entity_data(entity: &EntityData) -> StableEntityData {
     StableEntityData {
+        id: entity.id,
         name: entity.name.clone(),
         components: entity
             .components
@@ -925,6 +992,6 @@ mod tests {
 
     #[test]
     fn scene_version_constant_is_stable() {
-        assert_eq!(SceneFile::CURRENT_VERSION, 1);
+        assert_eq!(SceneFile::CURRENT_VERSION, 2);
     }
 }

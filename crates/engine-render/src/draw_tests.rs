@@ -16,6 +16,8 @@ fn assets_root() -> String {
     let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     root.push("..");
     root.push("..");
+    root.push("examples");
+    root.push("reference-project");
     root.push("assets");
     root.to_string_lossy().into_owned()
 }

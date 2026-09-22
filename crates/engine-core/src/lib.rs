@@ -1,6 +1,7 @@
 pub mod camera;
 pub mod error;
 pub mod hardening;
+pub mod id;
 pub mod reflect;
 pub mod schedule;
 pub mod tag;
@@ -11,6 +12,7 @@ pub mod window;
 pub use camera::{sync_camera_aspect_from_window, Camera2d, Camera3d, PrimaryCamera, WindowSize};
 pub use error::{EngineError, Result};
 pub use hardening::HardeningConfig;
+pub use id::{EntityId, PersistentId, ProjectId, SourceAssetId, SubAssetId};
 pub use reflect::register_core_reflection_types;
 pub use schedule::{EngineSchedules, FixedUpdate, PreRender, Startup, Update};
 pub use tag::{Hidden, PhysicsControlled, RenderLayer2D, RenderLayer3D, Visible};

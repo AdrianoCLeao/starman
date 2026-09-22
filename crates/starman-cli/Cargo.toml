@@ -1,0 +1,29 @@
+[package]
+name = "starman-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "starman"
+path = "src/main.rs"
+
+[lib]
+name = "starman_cli"
+path = "src/lib.rs"
+
+[dependencies]
+clap.workspace = true
+engine-assets = { path = "../engine-assets" }
+engine-core = { path = "../engine-core" }
+engine-project = { path = "../engine-project" }
+engine-runner = { path = "../engine-runner" }
+env_logger.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+bevy_ecs.workspace = true
+engine-reflect = { path = "../engine-reflect" }
+engine-render = { path = "../engine-render" }
+image.workspace = true

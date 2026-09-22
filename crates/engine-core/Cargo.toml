@@ -12,5 +12,10 @@ engine-math = { path = "../engine-math" }
 engine-diagnostics = { path = "../engine-diagnostics" }
 engine-reflect = { path = "../engine-reflect" }
 log.workspace = true
+serde.workspace = true
 thiserror.workspace = true
+uuid.workspace = true
 winit.workspace = true
+
+[dev-dependencies]
+ron.workspace = true

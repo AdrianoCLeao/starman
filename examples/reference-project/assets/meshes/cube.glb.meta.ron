@@ -1,0 +1,14 @@
+(
+    version: 1,
+    id: "9122e516-364e-4a88-ab91-31f858c3f605",
+    importer: "mesh",
+    dependencies: [],
+    content_hash: "fc0c7d7c98743c1053b9d83967eb05e759d40ad5d45911ef7a1052f0526d2a1d",
+    sub_assets: [
+        (
+            id: "b1ced084-4ec8-55c9-9efc-4fd9f81e43d2",
+            key: "mesh:0",
+            label: Some("Mesh"),
+        ),
+    ],
+)

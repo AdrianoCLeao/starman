@@ -1,0 +1,17 @@
+[package]
+name = "engine-runner"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+bevy_ecs.workspace = true
+engine-assets = { path = "../engine-assets" }
+engine-audio = { path = "../engine-audio" }
+engine-core = { path = "../engine-core" }
+engine-input = { path = "../engine-input" }
+engine-physics = { path = "../engine-physics" }
+engine-reflect = { path = "../engine-reflect" }
+engine-render = { path = "../engine-render" }
+log.workspace = true
