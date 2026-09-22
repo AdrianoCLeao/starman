@@ -35,25 +35,30 @@ Uma capacidade só está pronta quando:
 
 ## Estado atual
 
-A base já contém:
+Com o M1 fechado, a base contém:
 
-- workspace Rust modular com crates de core, render, física, áudio, input, assets, reflexão e editor;
+- workspace Rust modular com crates de core, render, física, áudio, input, assets, project, reflexão, editor e runtime compartilhado (`engine-runner`);
 - ECS e schedules multithreaded baseados em `bevy_ecs`;
 - transform hierarchy, câmeras, janela, fixed update e frame statistics;
 - reflexão de componentes e inspector orientado por metadados;
-- cenas RON versionadas e serialização estável;
+- **modelo de projeto**: manifesto versionado (`project.ron`), separação entre `assets/`, cache importado, diagnósticos e build (`crates/engine-project`), com `Project::open/validate/create` e um projeto de referência real (`examples/reference-project`);
+- **identidade persistente**: UUIDs estáveis para projetos, entidades de cena e source assets (`ProjectId`, `EntityId`, `SourceAssetId`), com sub-assets reais (`SubAssetId`) para meshes multi-recurso;
+- **asset database**: metadados de importação versionados (`.meta.ron`), hash de conteúdo, cache content-addressed e grafo de dependências (`crates/engine-assets/src/import`);
+- **referências tipadas**: `MeshRenderer`/`Sprite` persistem por ID quando um `AssetDatabase` está anexado, com resolução por caminho legado preservada para compatibilidade (ver `docs/asset-pipeline.md`);
+- **file watching** com debounce, jobs assíncronos, cancelamento por geração e atualização atômica;
+- **CLI** (`starman-cli`, binário `starman`) com `new`, `validate`, `import`, `run` e `test`;
+- cenas RON versionadas (v1→v2) com migração automática e testes golden-file;
 - renderer `wgpu` com integração de mesh, material, textura, câmera e viewport;
 - física Rapier 2D/3D, áudio Kira e input de teclado, mouse e gamepad;
-- editor `egui` com docking, seleção, gizmos, undo/redo, asset browser e play mode em processo separado;
-- hot reload inicial de texturas e um sandbox executável.
+- editor `egui` com docking, seleção, gizmos, undo/redo, asset browser, play mode em processo separado, e abertura de projeto via manifesto;
+- hot reload de textura, mesh e material (não mais só textura) e um sandbox executável, ambos project-aware.
 
-Os maiores gaps estruturais são:
+Os maiores gaps estruturais que restam são:
 
-- não existe ainda um contrato de projeto/plugin estável;
-- entidades e referências persistidas precisam de identidade durável independente do `Entity` do ECS;
-- o pipeline de assets ainda não é uma base de importação, cache e dependências de produção;
-- o renderer precisa ser separado em extração, preparação, fila e execução antes de crescer;
-- o editor e o game runner ainda conhecem integrações concretas demais;
+- não existe ainda um contrato de plugin/ABI estável (M3);
+- cenas ainda não são componíveis (sem cenas aninhadas nem prefabs — M2);
+- o renderer precisa ser separado em extração, preparação, fila e execução antes de crescer (M4);
+- a garantia de referência tipada por ID só vale para cenas já salvas depois da migração — o formato legado por caminho continua lido, mas não é reescrito sozinho por uma leitura (ver "migração ao salvar" em `docs/asset-pipeline.md`);
 - não há ainda uma vertical slice distribuível que prove o workflow completo.
 
 ## Ordem de dependências
@@ -297,18 +302,18 @@ Esses itens podem entrar depois, por evidência de produto, sem contaminar as fu
 
 ## Próximo ciclo recomendado
 
-O próximo ciclo deve terminar M0 e iniciar M1, nesta ordem:
+Com M0 e M1 fechados, o próximo ciclo inicia M2 (cenas aninhadas e prefabs), nesta ordem:
 
-1. registrar ADRs de project model, IDs persistentes, plugin ABI, asset pipeline e render architecture;
-2. criar CI Windows/Linux/macOS e separar testes headless de smoke tests gráficos;
-3. introduzir UUIDs persistentes e referências tipadas, com migração da cena v1;
-4. definir o manifesto e layout de um projeto Starman;
-5. criar a asset database incremental e o formato de metadata/import settings;
-6. substituir integrações concretas editor/runner por serviços e contratos explícitos;
-7. construir uma micro vertical slice que percorra abrir projeto → editar → salvar → play → empacotar;
-8. somente então iniciar o render graph e a ABI carregável de plugins.
+1. `SceneAsset` e instâncias de cena resolvidas por `EntityId`/`SourceAssetId` (já estáveis desde o M1), sem introduzir nenhum novo identificador efêmero;
+2. cenas aninhadas com detecção de ciclos;
+3. overrides por entidade/componente/campo — aplicar, reverter, promover;
+4. entidades adicionadas/removidas localmente em instâncias, com diff estrutural determinístico;
+5. edição isolada de prefab e breadcrumb de contexto no editor;
+6. clipboard, duplicação, multi-seleção e undo/redo transacional sobre esse novo modelo;
+7. autosave, recovery e escrita crash-safe;
+8. recompor a fase do jogo de referência (`examples/reference-project`) usando cenas reutilizáveis, provando o gate do M2 na prática.
 
-Cada item deve ser entregue como uma fatia vertical pequena, mantendo o workspace sempre compilável e os formatos migráveis.
+Cada item deve ser entregue como uma fatia vertical pequena, mantendo o workspace sempre compilável e os formatos migráveis — o mesmo padrão usado para fechar o M1.
 
 ## Indicadores de progresso
 
