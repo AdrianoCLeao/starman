@@ -12,15 +12,35 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use engine_core::{EngineError, Result, SourceAssetId};
+use engine_core::{EngineError, Result, SourceAssetId, SubAssetId};
 
 use super::cache::ImportedCache;
 use super::dependency_graph::DependencyGraph;
 use super::hash::hash_bytes;
 use super::meta::{
     default_importer_key_for, meta_path_for, read_meta, source_path_for_meta, write_meta,
-    AssetMeta, META_SUFFIX,
+    AssetMeta, SubAssetRecord, META_SUFFIX,
 };
+
+/// The result of the heavy, off-thread half of a reimport: the file was
+/// read, hashed, and stored in the content-addressed cache. Applying it to
+/// the database (index/metadata updates) happens on the owning thread.
+#[derive(Clone, Debug)]
+pub(crate) struct ImportOutcome {
+    pub path: PathBuf,
+    pub relative_path: String,
+    pub content_hash: String,
+}
+
+/// What applying an [`ImportOutcome`] did.
+#[derive(Debug, Default)]
+pub(crate) struct AppliedImport {
+    /// False when the content hash matched what was already recorded (e.g.
+    /// a touch or an identical re-save), so nothing needs reloading.
+    pub changed: bool,
+    /// Relative paths of assets that transitively depend on the changed one.
+    pub dependents: Vec<String>,
+}
 
 pub struct AssetDatabase {
     assets_root: PathBuf,
@@ -33,6 +53,9 @@ pub struct AssetDatabase {
     /// enough to re-associate the id with wherever the content resurfaces.
     dangling: HashMap<String, (PathBuf, AssetMeta)>,
     dependency_graph: DependencyGraph,
+    /// Reverse index from a sub-asset id to the parent source asset it
+    /// belongs to, rebuilt from each asset's [`AssetMeta::sub_assets`].
+    sub_asset_index: HashMap<SubAssetId, SourceAssetId>,
 }
 
 impl AssetDatabase {
@@ -47,6 +70,7 @@ impl AssetDatabase {
             metas: HashMap::new(),
             dangling: HashMap::new(),
             dependency_graph: DependencyGraph::default(),
+            sub_asset_index: HashMap::new(),
         };
         database.rescan()?;
         Ok(database)
@@ -65,6 +89,7 @@ impl AssetDatabase {
         self.metas.clear();
         self.dangling.clear();
         self.dependency_graph = DependencyGraph::default();
+        self.sub_asset_index.clear();
 
         let mut files = Vec::new();
         collect_files(&self.assets_root, &mut files)?;
@@ -92,6 +117,9 @@ impl AssetDatabase {
                 self.by_relative_path.insert(relative, meta.id);
                 self.dependency_graph
                     .set_dependencies(meta.id, &meta.dependencies);
+                for sub_asset in &meta.sub_assets {
+                    self.sub_asset_index.insert(sub_asset.id, meta.id);
+                }
                 self.metas.insert(meta.id, meta);
             } else {
                 // The source moved or was deleted without its sidecar: keep
@@ -151,14 +179,32 @@ impl AssetDatabase {
             .is_some_and(|meta| meta.content_hash == content_hash && meta.id == id);
 
         if !up_to_date {
+            let sub_assets = if importer == "mesh" {
+                extract_mesh_sub_assets(&source_path, id).unwrap_or_else(|error| {
+                    log::warn!(
+                        target: "engine::assets",
+                        "failed to enumerate sub-assets of '{}': {}",
+                        relative_path,
+                        error
+                    );
+                    Vec::new()
+                })
+            } else {
+                Vec::new()
+            };
+
             let meta = AssetMeta {
                 version: AssetMeta::CURRENT_VERSION,
                 id,
                 importer,
                 dependencies: dependencies.clone(),
                 content_hash: content_hash.clone(),
+                sub_assets,
             };
             write_meta(&meta_path, &meta)?;
+            for sub_asset in &meta.sub_assets {
+                self.sub_asset_index.insert(sub_asset.id, id);
+            }
             self.metas.insert(id, meta);
         }
 
@@ -169,6 +215,77 @@ impl AssetDatabase {
         self.dependency_graph.set_dependencies(id, &dependencies);
 
         Ok(id)
+    }
+
+    /// Sub-resources of `id` (e.g. one entry per mesh in a multi-mesh
+    /// file), in stable order. Empty for single-resource asset types.
+    pub fn sub_assets_of(&self, id: SourceAssetId) -> &[SubAssetRecord] {
+        self.metas
+            .get(&id)
+            .map(|meta| meta.sub_assets.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Resolves a sub-asset id to its parent source asset id and record.
+    pub fn resolve_sub_asset(&self, id: SubAssetId) -> Option<(SourceAssetId, &SubAssetRecord)> {
+        let source_id = *self.sub_asset_index.get(&id)?;
+        let record = self
+            .metas
+            .get(&source_id)?
+            .sub_assets
+            .iter()
+            .find(|record| record.id == id)?;
+        Some((source_id, record))
+    }
+
+    pub(crate) fn cache(&self) -> ImportedCache {
+        self.cache.clone()
+    }
+
+    /// Commits the result of an off-thread reimport (see [`ImportOutcome`]).
+    /// Assets the database has never seen are imported in full.
+    pub(crate) fn apply_import_outcome(
+        &mut self,
+        outcome: &ImportOutcome,
+    ) -> Result<AppliedImport> {
+        let known = self
+            .by_relative_path
+            .get(&outcome.relative_path)
+            .copied()
+            .filter(|id| self.metas.contains_key(id));
+
+        let Some(id) = known else {
+            let id = self.ensure_imported(&outcome.relative_path)?;
+            return Ok(AppliedImport {
+                changed: true,
+                dependents: self.dependent_paths(id),
+            });
+        };
+
+        let Some(meta) = self.metas.get(&id) else {
+            return Ok(AppliedImport::default());
+        };
+        if meta.content_hash == outcome.content_hash {
+            return Ok(AppliedImport::default());
+        }
+
+        let mut updated = meta.clone();
+        updated.content_hash = outcome.content_hash.clone();
+        let source_path = self.assets_root.join(&outcome.relative_path);
+        write_meta(&meta_path_for(&source_path), &updated)?;
+        self.metas.insert(id, updated);
+
+        Ok(AppliedImport {
+            changed: true,
+            dependents: self.dependent_paths(id),
+        })
+    }
+
+    fn dependent_paths(&self, id: SourceAssetId) -> Vec<String> {
+        self.invalidate(id)
+            .into_iter()
+            .filter_map(|dependent| self.by_id.get(&dependent).cloned())
+            .collect()
     }
 
     /// Declares which other assets `id` depends on (e.g. a material
@@ -274,6 +391,97 @@ impl AssetDatabase {
     pub fn invalidate(&self, id: SourceAssetId) -> Vec<SourceAssetId> {
         self.dependency_graph.transitive_dependents_of(id)
     }
+
+    /// Imports every source asset under [`Self::assets_root`] (skipping
+    /// `.meta.ron` sidecars and hidden files/directories), classifying each
+    /// one as newly imported/changed, unchanged since its last import, or
+    /// failed. Never aborts partway through a batch: one asset failing to
+    /// import does not prevent the rest from being processed.
+    pub fn import_all(&mut self) -> Result<ImportSummary> {
+        let mut files = Vec::new();
+        collect_files(&self.assets_root, &mut files)?;
+
+        let mut summary = ImportSummary::default();
+        for path in files {
+            let Some(raw) = path.as_os_str().to_str() else {
+                continue;
+            };
+            if raw.ends_with(META_SUFFIX) {
+                continue;
+            }
+            let Some(relative_path) = relative_string(&self.assets_root, &path) else {
+                continue;
+            };
+
+            let previous_hash = self
+                .resolve_id(&relative_path)
+                .and_then(|id| self.meta(id))
+                .map(|meta| meta.content_hash.clone());
+
+            match self.ensure_imported(&relative_path) {
+                Ok(id) => {
+                    let current_hash = self.meta(id).map(|meta| meta.content_hash.clone());
+                    if previous_hash.is_some() && previous_hash == current_hash {
+                        summary.unchanged.push(relative_path);
+                    } else {
+                        summary.imported.push((relative_path, id));
+                    }
+                }
+                Err(error) => summary.failed.push((relative_path, error.to_string())),
+            }
+        }
+
+        Ok(summary)
+    }
+}
+
+/// The result of [`AssetDatabase::import_all`].
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ImportSummary {
+    /// Assets that were newly imported or whose content changed.
+    pub imported: Vec<(String, SourceAssetId)>,
+    /// Assets whose content hash matched what was already recorded.
+    pub unchanged: Vec<String>,
+    /// `(relative_path, reason)` for assets that failed to import.
+    pub failed: Vec<(String, String)>,
+}
+
+impl ImportSummary {
+    pub fn is_success(&self) -> bool {
+        self.failed.is_empty()
+    }
+}
+
+/// Enumerates the meshes in a glTF/glb file as sub-asset records, without
+/// decoding vertex buffers (uses `Gltf::open`, which only parses the JSON
+/// document, not `gltf::import`, which would also eagerly load every
+/// buffer — cheap enough to call on every reimport of a mesh source).
+fn extract_mesh_sub_assets(
+    source_path: &Path,
+    parent: SourceAssetId,
+) -> Result<Vec<SubAssetRecord>> {
+    let document = gltf::Gltf::open(source_path)
+        .map_err(|error| EngineError::AssetLoad {
+            path: source_path.display().to_string(),
+            reason: error.to_string(),
+        })?
+        .document;
+
+    let records = document
+        .meshes()
+        .enumerate()
+        .map(|(index, mesh)| {
+            let key = format!("mesh:{index}");
+            let id = SubAssetId::derive(parent, &key);
+            SubAssetRecord {
+                id,
+                key,
+                label: mesh.name().map(str::to_owned),
+            }
+        })
+        .collect();
+
+    Ok(records)
 }
 
 fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {

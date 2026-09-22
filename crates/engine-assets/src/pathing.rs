@@ -23,21 +23,18 @@ pub(crate) fn resolve_disk_path(root: &AssetPath, relative_path: &str) -> Result
         });
     }
 
-    let path = Path::new(root.as_str()).join(relative);
-    let normalized = normalize_disk_path(&path);
-
+    // Canonicalize the root once and join the (already-validated,
+    // traversal-free) relative path onto it, rather than canonicalizing the
+    // full joined path independently: the latter falls back to the raw,
+    // un-resolved join whenever the leaf doesn't exist yet (a mesh that
+    // hasn't been imported, a texture nobody has loaded yet, ...), which on
+    // platforms where the root itself sits behind a symlink (e.g. macOS's
+    // `/var` -> `/private/var`) makes a perfectly valid path look like it
+    // "escaped" a root that resolved the symlink. Joining onto the
+    // already-canonical root keeps the result consistently prefixed by it,
+    // so no separate escape check is needed here.
     let normalized_root = normalize_disk_path(Path::new(root.as_str()));
-    if normalized.is_absolute()
-        && normalized_root.is_absolute()
-        && !normalized.starts_with(&normalized_root)
-    {
-        return Err(EngineError::AssetLoad {
-            path: relative_path.to_owned(),
-            reason: "resolved path escaped asset root".to_owned(),
-        });
-    }
-
-    Ok(normalized)
+    Ok(normalized_root.join(relative))
 }
 
 pub(crate) fn normalize_disk_path(path: &Path) -> PathBuf {

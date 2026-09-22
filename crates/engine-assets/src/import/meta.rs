@@ -5,10 +5,25 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use engine_core::{EngineError, Result, SourceAssetId};
+use engine_core::{EngineError, Result, SourceAssetId, SubAssetId};
+
+use super::atomic::write_atomic;
 use serde::{Deserialize, Serialize};
 
 pub const META_SUFFIX: &str = ".meta.ron";
+
+/// One sub-resource within a source asset — e.g. one mesh within a
+/// multi-mesh glTF file — addressed by its own stable [`SubAssetId`]
+/// (ADR 0002: derived from the parent id plus a stable importer key).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SubAssetRecord {
+    pub id: SubAssetId,
+    /// The stable key the id was derived from (e.g. `"mesh:0"`).
+    pub key: String,
+    /// A human-readable label from the source content, if any (e.g. the
+    /// glTF mesh's own name).
+    pub label: Option<String>,
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AssetMeta {
@@ -18,6 +33,12 @@ pub struct AssetMeta {
     #[serde(default)]
     pub dependencies: Vec<SourceAssetId>,
     pub content_hash: String,
+    /// Sub-resources within this asset (e.g. one entry per mesh in a
+    /// multi-mesh glTF file). Empty for single-resource asset types
+    /// (textures, materials) and for older `.meta.ron` files written before
+    /// this field existed — additive, no version bump needed.
+    #[serde(default)]
+    pub sub_assets: Vec<SubAssetRecord>,
 }
 
 impl AssetMeta {
@@ -75,7 +96,7 @@ pub(crate) fn write_meta(meta_path: &Path, meta: &AssetMeta) -> Result<()> {
             reason: format!("failed to serialize asset metadata: {error}"),
         })?;
 
-    fs::write(meta_path, serialized).map_err(|error| EngineError::AssetLoad {
+    write_atomic(meta_path, serialized.as_bytes()).map_err(|error| EngineError::AssetLoad {
         path: meta_path.display().to_string(),
         reason: format!("failed to write asset metadata: {error}"),
     })

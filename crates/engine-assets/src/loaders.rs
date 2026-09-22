@@ -2,7 +2,7 @@ use engine_core::{EngineError, HardeningConfig, Result};
 use image::GenericImageView;
 use std::path::Path;
 
-use crate::{MeshData, MeshVertex, TextureData};
+use crate::{MaterialData, MeshData, MeshVertex, TextureData};
 
 pub(crate) fn load_texture_payload(
     path: &Path,
@@ -45,21 +45,32 @@ pub(crate) fn load_texture_payload(
     })
 }
 
-pub(crate) fn load_mesh_payload(path: &Path, hardening: &HardeningConfig) -> Result<MeshData> {
+/// Loads every mesh in a glTF/glb file as a separate [`MeshData`] — one per
+/// `document.meshes()` entry, in that same (stable) order, which is what
+/// mesh sub-asset keys (`"mesh:<index>"`, see
+/// `AssetDatabase::extract_mesh_sub_asset_keys`) index into. Primitives
+/// *within* a single mesh are still merged into that mesh's one
+/// vertex/index buffer, as they always were.
+pub(crate) fn load_mesh_payloads(
+    path: &Path,
+    hardening: &HardeningConfig,
+) -> Result<Vec<MeshData>> {
     let (document, buffers, _images) =
         gltf::import(path).map_err(|error| EngineError::AssetLoad {
             path: path.display().to_string(),
             reason: error.to_string(),
         })?;
 
-    let mut mesh_name = None;
-    let mut vertices = Vec::new();
-    let mut indices = Vec::new();
+    let fallback_name = path
+        .file_stem()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "unnamed-mesh".to_owned());
 
-    for mesh in document.meshes() {
-        if mesh_name.is_none() {
-            mesh_name = mesh.name().map(str::to_owned);
-        }
+    let mut meshes = Vec::new();
+
+    for (mesh_index, mesh) in document.meshes().enumerate() {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
 
         for primitive in mesh.primitives() {
             let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
@@ -138,13 +149,59 @@ pub(crate) fn load_mesh_payload(path: &Path, hardening: &HardeningConfig) -> Res
 
             indices.extend(primitive_indices);
         }
+
+        if vertices.is_empty() {
+            continue;
+        }
+
+        let name = mesh
+            .name()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("{fallback_name}-{mesh_index}"));
+
+        meshes.push(MeshData {
+            name,
+            vertices,
+            indices,
+        });
     }
 
-    if vertices.is_empty() {
+    if meshes.is_empty() {
         return Err(EngineError::AssetLoad {
             path: path.display().to_string(),
             reason: "gltf file contains no renderable primitives".to_owned(),
         });
+    }
+
+    Ok(meshes)
+}
+
+/// Loads every mesh in the file (see [`load_mesh_payloads`]) and flattens
+/// them into one merged blob — the long-standing behavior of
+/// `AssetServer::load_mesh_handle`, preserved unchanged for callers that
+/// just want a single renderable mesh for the whole file.
+pub(crate) fn load_mesh_payload_merged(
+    path: &Path,
+    hardening: &HardeningConfig,
+) -> Result<MeshData> {
+    let meshes = load_mesh_payloads(path, hardening)?;
+
+    let mut name = None;
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    for mesh in meshes {
+        if name.is_none() {
+            name = Some(mesh.name);
+        }
+
+        let base_index = u32::try_from(vertices.len()).map_err(|_| EngineError::AssetLoad {
+            path: path.display().to_string(),
+            reason: "mesh has too many vertices for u32 index buffer".to_owned(),
+        })?;
+
+        vertices.extend(mesh.vertices);
+        indices.extend(mesh.indices.into_iter().map(|index| base_index + index));
     }
 
     let fallback_name = path
@@ -153,8 +210,62 @@ pub(crate) fn load_mesh_payload(path: &Path, hardening: &HardeningConfig) -> Res
         .unwrap_or_else(|| "unnamed-mesh".to_owned());
 
     Ok(MeshData {
-        name: mesh_name.unwrap_or(fallback_name),
+        name: name.unwrap_or(fallback_name),
         vertices,
         indices,
     })
+}
+
+pub(crate) fn load_material_payload(path: &Path) -> Result<MaterialData> {
+    let source = std::fs::read_to_string(path).map_err(|error| EngineError::AssetLoad {
+        path: path.display().to_string(),
+        reason: error.to_string(),
+    })?;
+
+    // RON reads fixed-size arrays as tuples (`(1.0, ..)`), but material files
+    // are authored with lists (`[1.0, ..]`), so parse through a `Vec`.
+    #[derive(serde::Deserialize)]
+    struct RawMaterial {
+        base_color_factor: Vec<f32>,
+        metallic: f32,
+        roughness: f32,
+    }
+
+    let raw: RawMaterial = ron::from_str(&source).map_err(|error| EngineError::AssetLoad {
+        path: path.display().to_string(),
+        reason: format!("failed to parse material: {error}"),
+    })?;
+
+    let base_color_factor: [f32; 4] =
+        raw.base_color_factor
+            .as_slice()
+            .try_into()
+            .map_err(|_| EngineError::AssetLoad {
+                path: path.display().to_string(),
+                reason: format!(
+                    "base_color_factor must have 4 components, found {}",
+                    raw.base_color_factor.len()
+                ),
+            })?;
+
+    let material = MaterialData {
+        base_color_factor,
+        metallic: raw.metallic,
+        roughness: raw.roughness,
+    };
+
+    let all_finite = material
+        .base_color_factor
+        .iter()
+        .all(|value| value.is_finite())
+        && material.metallic.is_finite()
+        && material.roughness.is_finite();
+    if !all_finite {
+        return Err(EngineError::AssetLoad {
+            path: path.display().to_string(),
+            reason: "material values must be finite numbers".to_owned(),
+        });
+    }
+
+    Ok(material)
 }

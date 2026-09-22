@@ -9,6 +9,9 @@ use std::path::PathBuf;
 
 use engine_core::{EngineError, Result};
 
+use super::atomic::write_atomic;
+
+#[derive(Clone)]
 pub(crate) struct ImportedCache {
     root: PathBuf,
 }
@@ -47,7 +50,7 @@ impl ImportedCache {
             })?;
         }
 
-        fs::write(&entry_path, bytes).map_err(|error| EngineError::AssetLoad {
+        write_atomic(&entry_path, bytes).map_err(|error| EngineError::AssetLoad {
             path: entry_path.display().to_string(),
             reason: format!("failed to write import cache entry: {error}"),
         })?;
