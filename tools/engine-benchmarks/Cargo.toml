@@ -19,3 +19,5 @@ criterion.workspace = true
 engine-assets = { path = "../../crates/engine-assets" }
 engine-core = { path = "../../crates/engine-core" }
 engine-math = { path = "../../crates/engine-math" }
+engine-reflect = { path = "../../crates/engine-reflect" }
+engine-render = { path = "../../crates/engine-render" }

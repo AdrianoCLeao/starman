@@ -103,6 +103,17 @@ jobs:
           mkdir -p target/smoke
           cargo run -p engine-smoke -- --backend "${{ matrix.backend }}" ${{ matrix.smoke_flags }} --report "target/smoke/${{ matrix.name }}.json"
 
+      - name: Exercise the CLI against the reference project
+        shell: bash
+        # `import` writes/updates `.meta.ron` sidecars next to each source
+        # asset — that is intended, permanent output (ADR 0003), not a
+        # side effect to guard against, so this step does not assert a
+        # clean working tree afterward.
+        run: |
+          cargo run -p starman-cli -- validate examples/reference-project
+          cargo run -p starman-cli -- import examples/reference-project
+          cargo run -p starman-cli -- test examples/reference-project
+
       - name: Upload smoke report
         if: always()
         # actions/upload-artifact@v4
