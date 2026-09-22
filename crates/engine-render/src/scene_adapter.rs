@@ -1,7 +1,9 @@
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_assets::{AssetServer, SceneExternalComponents, SceneValue};
-use engine_core::Result;
+use engine_assets::{
+    AssetServer, MaterialHandle, MeshHandle, SceneExternalComponents, SceneValue, TextureHandle,
+};
+use engine_core::{Result, SourceAssetId, SubAssetId};
 
 use crate::{MeshRenderable3d, SpriteRenderable2d};
 
@@ -16,7 +18,7 @@ impl SceneExternalComponents for RenderSceneAdapter {
         out: &mut std::collections::HashMap<String, SceneValue>,
     ) -> Result<()> {
         if let Some(mesh_renderer) = world.get::<MeshRenderable3d>(entity) {
-            let Some(mesh_path) = asset_server.mesh_relative_path(mesh_renderer.mesh) else {
+            let Some(mesh_value) = mesh_reference_value(asset_server, mesh_renderer.mesh) else {
                 log::warn!(
                     target: "engine::assets",
                     "Skipping MeshRenderer serialization for entity {:?}: unresolved mesh handle",
@@ -25,7 +27,7 @@ impl SceneExternalComponents for RenderSceneAdapter {
                 return Ok(());
             };
 
-            let Some(texture_path) = asset_server.texture_relative_path(mesh_renderer.texture)
+            let Some(texture_value) = texture_reference_value(asset_server, mesh_renderer.texture)
             else {
                 log::warn!(
                     target: "engine::assets",
@@ -35,7 +37,8 @@ impl SceneExternalComponents for RenderSceneAdapter {
                 return Ok(());
             };
 
-            let Some(material_path) = asset_server.material_relative_path(mesh_renderer.material)
+            let Some(material_value) =
+                material_reference_value(asset_server, mesh_renderer.material)
             else {
                 log::warn!(
                     target: "engine::assets",
@@ -46,15 +49,15 @@ impl SceneExternalComponents for RenderSceneAdapter {
             };
 
             let value = map_value(vec![
-                ("mesh", SceneValue::String(mesh_path)),
-                ("texture", SceneValue::String(texture_path)),
-                ("material", SceneValue::String(material_path)),
+                ("mesh", mesh_value),
+                ("texture", texture_value),
+                ("material", material_value),
             ]);
             out.insert("MeshRenderer".to_owned(), value);
         }
 
         if let Some(sprite) = world.get::<SpriteRenderable2d>(entity) {
-            let Some(texture_path) = asset_server.texture_relative_path(sprite.texture) else {
+            let Some(texture_value) = texture_reference_value(asset_server, sprite.texture) else {
                 log::warn!(
                     target: "engine::assets",
                     "Skipping Sprite serialization for entity {:?}: unresolved texture handle",
@@ -64,7 +67,7 @@ impl SceneExternalComponents for RenderSceneAdapter {
             };
 
             let value = map_value(vec![
-                ("texture", SceneValue::String(texture_path)),
+                ("texture", texture_value),
                 ("size", vec2_value(sprite.size)),
                 ("color", vec4_value(sprite.color)),
                 ("uv_min", vec2_value(sprite.uv_min)),
@@ -111,7 +114,7 @@ impl SceneExternalComponents for RenderSceneAdapter {
                     return Ok(true);
                 };
 
-                let mesh = match asset_server.load_mesh_handle(mesh_path) {
+                let mesh = match resolve_mesh_reference(asset_server, mesh_path) {
                     Ok(handle) => handle,
                     Err(error) => {
                         log::warn!(
@@ -124,7 +127,7 @@ impl SceneExternalComponents for RenderSceneAdapter {
                         return Ok(true);
                     }
                 };
-                let texture = match asset_server.load_texture_handle(texture_path) {
+                let texture = match resolve_texture_reference(asset_server, texture_path) {
                     Ok(handle) => handle,
                     Err(error) => {
                         log::warn!(
@@ -137,7 +140,7 @@ impl SceneExternalComponents for RenderSceneAdapter {
                         return Ok(true);
                     }
                 };
-                let material = match asset_server.load_material_handle(material_path) {
+                let material = match resolve_material_reference(asset_server, material_path) {
                     Ok(handle) => handle,
                     Err(error) => {
                         log::warn!(
@@ -167,7 +170,7 @@ impl SceneExternalComponents for RenderSceneAdapter {
                     return Ok(true);
                 };
 
-                let texture = match asset_server.load_texture_handle(texture_path) {
+                let texture = match resolve_texture_reference(asset_server, texture_path) {
                     Ok(handle) => handle,
                     Err(error) => {
                         log::warn!(
@@ -205,6 +208,98 @@ impl SceneExternalComponents for RenderSceneAdapter {
             _ => Ok(false),
         }
     }
+}
+
+// -- Typed asset references ---------------------------------------------
+//
+// A scene persists mesh/texture/material references as a single string
+// field that is either a stable id (preferred, once known) or — for
+// backward compatibility, and for sessions with no `AssetDatabase`
+// attached — a plain relative path. There is no separate tag: the field's
+// shape alone disambiguates it (a legitimate relative path never happens to
+// also parse as a UUID). See docs/asset-pipeline.md for the full
+// rationale, including why this only protects references that have been
+// *saved* since an `AssetDatabase` learned their id ("migration on save").
+//
+// The `mesh` field is layered one level deeper than `texture`/`material`:
+// it may resolve to one specific mesh within a multi-mesh file (a
+// `SubAssetId`) or to the whole file merged (a `SourceAssetId`). Both id
+// kinds serialize as a bare UUID string with no structural difference, so
+// resolution tries the sub-asset id first, then the source id — the
+// negligible risk of a random v4 `SourceAssetId` colliding with a derived
+// v5 `SubAssetId` is an accepted, documented trade-off in exchange for
+// keeping the persisted format a single plain string.
+
+fn texture_reference_value(
+    asset_server: &AssetServer,
+    handle: TextureHandle,
+) -> Option<SceneValue> {
+    asset_server
+        .texture_source_id(handle)
+        .map(|id| SceneValue::String(id.to_string()))
+        .or_else(|| {
+            asset_server
+                .texture_relative_path(handle)
+                .map(SceneValue::String)
+        })
+}
+
+fn material_reference_value(
+    asset_server: &AssetServer,
+    handle: MaterialHandle,
+) -> Option<SceneValue> {
+    asset_server
+        .material_source_id(handle)
+        .map(|id| SceneValue::String(id.to_string()))
+        .or_else(|| {
+            asset_server
+                .material_relative_path(handle)
+                .map(SceneValue::String)
+        })
+}
+
+fn mesh_reference_value(asset_server: &AssetServer, handle: MeshHandle) -> Option<SceneValue> {
+    if let Some(sub_id) = asset_server.mesh_sub_source_id(handle) {
+        return Some(SceneValue::String(sub_id.to_string()));
+    }
+    if let Some(source_id) = asset_server.mesh_source_id(handle) {
+        return Some(SceneValue::String(source_id.to_string()));
+    }
+    asset_server
+        .mesh_relative_path(handle)
+        .map(SceneValue::String)
+}
+
+fn resolve_texture_reference(asset_server: &mut AssetServer, value: &str) -> Result<TextureHandle> {
+    if let Ok(id) = SourceAssetId::parse(value) {
+        return asset_server.load_texture_handle_by_id(id);
+    }
+    asset_server.load_texture_handle(value)
+}
+
+fn resolve_material_reference(
+    asset_server: &mut AssetServer,
+    value: &str,
+) -> Result<MaterialHandle> {
+    if let Ok(id) = SourceAssetId::parse(value) {
+        return asset_server.load_material_handle_by_id(id);
+    }
+    asset_server.load_material_handle(value)
+}
+
+fn resolve_mesh_reference(asset_server: &mut AssetServer, value: &str) -> Result<MeshHandle> {
+    if let Ok(sub_id) = SubAssetId::parse(value) {
+        if let Ok(handle) = asset_server.load_mesh_handle_by_sub_id(sub_id) {
+            return Ok(handle);
+        }
+        // Fall through: `value` may still be a valid `SourceAssetId` (the
+        // UUID happened to parse as both, or this database has no
+        // sub-asset registered under it) or a legacy path.
+    }
+    if let Ok(id) = SourceAssetId::parse(value) {
+        return asset_server.load_mesh_handle_by_id(id);
+    }
+    asset_server.load_mesh_handle(value)
 }
 
 fn map_value(entries: Vec<(&str, SceneValue)>) -> SceneValue {
