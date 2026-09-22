@@ -14,6 +14,7 @@ engine-diagnostics = { path = "../../crates/engine-diagnostics" }
 engine-input = { path = "../../crates/engine-input" }
 engine-math = { path = "../../crates/engine-math" }
 engine-physics = { path = "../../crates/engine-physics" }
+engine-project = { path = "../../crates/engine-project" }
 engine-reflect = { path = "../../crates/engine-reflect" }
 engine-render = { path = "../../crates/engine-render" }
 gilrs.workspace = true

@@ -172,6 +172,11 @@ pub struct EditorConfig {
     #[serde(default)]
     pub recent_files: Vec<PathBuf>,
     pub last_opened_scene: Option<PathBuf>,
+    /// The last project opened, used as a fallback when the editor is
+    /// launched without an explicit project path argument. There is no
+    /// "recent projects" list yet (M7 scope) — just this one.
+    #[serde(default)]
+    pub last_project_path: Option<PathBuf>,
     #[serde(default)]
     pub viewport_camera: ViewportCameraConfig,
     #[serde(default)]
@@ -190,6 +195,7 @@ impl Default for EditorConfig {
             dock_state: create_default_layout(),
             recent_files: Vec::new(),
             last_opened_scene: None,
+            last_project_path: None,
             viewport_camera: ViewportCameraConfig::default(),
             viewport_overlay: ViewportOverlayConfig::default(),
             gizmo_snap: GizmoSnapConfig::default(),

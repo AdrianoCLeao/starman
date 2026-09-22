@@ -1,0 +1,9 @@
+(
+    version: 1,
+    id: "bedc6c7d-6817-47c9-857b-0279e69ea682",
+    name: "Starman Reference Project",
+    entry_scene: "scenes/example.scene.ron",
+    plugins: [],
+    settings: {},
+    targets: [],
+)

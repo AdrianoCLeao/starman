@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::{Commands, Query, Res, ResMut, Resource, With};
 use bevy_ecs::world::World;
-use engine_assets::{AssetModule, MaterialHandle, MeshHandle, TextureHandle};
+use engine_assets::{AssetDatabase, AssetModule, MaterialHandle, MeshHandle, TextureHandle};
 use engine_audio::AudioModule;
 use engine_core::{
     self, Camera2d, Camera3d, Children, Engine, EngineConfig, EngineModules, FrameTime,
@@ -17,7 +17,6 @@ use engine_physics::{
 use engine_reflect::with_reflection_registries;
 use engine_render::{MeshRenderable3d, RenderModule};
 use gilrs::{Axis, Button};
-use std::path::Path;
 use std::sync::{Arc, Once};
 use winit::window::Window;
 use winit::{event::MouseButton, keyboard::KeyCode};
@@ -300,6 +299,22 @@ fn ecs_camera_controller(
     }
 }
 
+/// Best-effort: if run from a directory that is (or is inside) a Starman
+/// project — the normal case, run from the repo root against
+/// `examples/reference-project` — returns it, so the sandbox can use its
+/// `assets/` directory and attach an `AssetDatabase`. `None` otherwise,
+/// which is not an error: the sandbox still works standalone from any CWD,
+/// falling back to the reference project's path directly.
+fn open_project() -> Option<engine_project::Project> {
+    engine_project::Project::open(".").ok()
+}
+
+fn resolve_assets_root(project: Option<&engine_project::Project>) -> std::path::PathBuf {
+    project
+        .map(|project| project.paths.assets_dir())
+        .unwrap_or_else(|| std::path::PathBuf::from("examples/reference-project/assets"))
+}
+
 struct SandboxModules {
     renderer: RenderModule,
     audio: AudioModule,
@@ -309,7 +324,16 @@ struct SandboxModules {
 
 impl SandboxModules {
     fn new() -> Result<Self> {
-        let assets = AssetModule::new("assets");
+        let project = open_project();
+        let assets_root = resolve_assets_root(project.as_ref());
+        let mut assets = AssetModule::new(assets_root.to_string_lossy().to_string());
+        if let Some(project) = &project {
+            if let Ok(database) =
+                AssetDatabase::open(project.paths.assets_dir(), project.paths.imported_dir())
+            {
+                assets.asset_server_mut().attach_database(database);
+            }
+        }
         let _asset_path = assets.load_stub("textures/placeholder.png")?;
 
         Ok(Self {
@@ -345,12 +369,14 @@ impl EngineModules for SandboxModules {
     }
 
     fn update(&mut self, _delta_seconds: f32) -> Result<()> {
-        let reload_count = self.assets.poll_texture_hot_reload();
-        if reload_count > 0 {
+        let reload = self.assets.poll_hot_reload();
+        if reload.reloaded_count() > 0 {
             log::info!(
                 target: "engine::sandbox",
-                "Hot-reloaded {} texture asset(s)",
-                reload_count
+                "Hot-reloaded {} texture(s), {} mesh(es), {} material(s)",
+                reload.textures.len(),
+                reload.meshes.len(),
+                reload.materials.len()
             );
         }
 
@@ -401,10 +427,11 @@ impl Plugin<SandboxModules> for SandboxBootstrapPlugin {
             },
         );
 
+        let assets_root = resolve_assets_root(open_project().as_ref());
         match engine
             .modules
             .audio
-            .play_music_with_fallback(Path::new("assets/audio/ambient"))
+            .play_music_with_fallback(assets_root.join("audio/ambient"))
         {
             Ok(_) => {
                 log::info!(

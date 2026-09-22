@@ -15,7 +15,7 @@ use bevy_ecs::world::World;
 use eframe::egui;
 use egui_dock::{DockArea, DockState, TabViewer};
 use engine_assets::{
-    AssetServer, MaterialHandle, MeshData, MeshHandle, SceneDeserializer, SceneFile,
+    AssetDatabase, AssetServer, MaterialHandle, MeshData, MeshHandle, SceneDeserializer, SceneFile,
     SceneSerializer, TextureHandle,
 };
 use engine_core::{
@@ -852,12 +852,37 @@ pub struct EditorApp {
 }
 
 impl EditorApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let config = EditorConfig::load();
+    /// Opens `project_path` as a Starman project and builds the editor
+    /// around it — failing fast with an actionable error if the manifest
+    /// or its layout is invalid, rather than falling back to some hardcoded
+    /// directory. There is no "open project" picker yet (a full project
+    /// manager UI is M7 scope); this is the entire project-selection story
+    /// for now.
+    pub fn try_new(cc: &eframe::CreationContext<'_>, project_path: PathBuf) -> Result<Self> {
+        let project = engine_project::Project::open(&project_path)?;
+
+        let mut config = EditorConfig::load();
+        config.last_project_path = Some(project.paths.root().to_path_buf());
+        let _ = config.save();
+
         let editor_camera = Self::editor_camera_from_config(&config);
         let viewport_overlay = ViewportOverlayState::from_config(&config.viewport_overlay);
         let gizmo_state = GizmoState::from_configs(&config.gizmo_snap, &config.gizmo_tool);
-        let asset_server = AssetServer::new("assets");
+
+        let mut asset_server =
+            AssetServer::new(project.paths.assets_dir().to_string_lossy().to_string());
+        match AssetDatabase::open(project.paths.assets_dir(), project.paths.imported_dir()) {
+            Ok(database) => asset_server.attach_database(database),
+            Err(error) => {
+                log::warn!(
+                    target: "engine::editor",
+                    "Failed to open asset database for project '{}': {}",
+                    project.paths.root().display(),
+                    error
+                );
+            }
+        }
+
         let asset_browser = AssetBrowserState::new(
             PathBuf::from(asset_server.root().as_str()),
             &config.asset_browser,
@@ -918,7 +943,7 @@ impl EditorApp {
 
         app.bootstrap_viewport_scene();
 
-        app
+        Ok(app)
     }
 
     fn now_seconds(&self) -> f64 {
@@ -4957,11 +4982,31 @@ impl eframe::App for EditorApp {
             ctx.request_repaint();
         }
 
-        let hot_reload_count = self.asset_server.poll_texture_hot_reload();
-        if hot_reload_count > 0 {
+        let hot_reload = self.asset_server.poll_hot_reload();
+        if hot_reload.reloaded_count() > 0 {
             self.log_message(
                 LogLevel::Info,
-                format!("Hot-reloaded {} texture asset(s)", hot_reload_count),
+                format!(
+                    "Hot-reloaded {} texture(s), {} mesh(es), {} material(s)",
+                    hot_reload.textures.len(),
+                    hot_reload.meshes.len(),
+                    hot_reload.materials.len()
+                ),
+            );
+        }
+        for scene_path in &hot_reload.scenes {
+            self.log_message(
+                LogLevel::Info,
+                format!("Scene changed on disk: {}", scene_path.display()),
+            );
+        }
+        for failed_path in &hot_reload.failed {
+            self.log_message(
+                LogLevel::Warn,
+                format!(
+                    "Hot-reload failed, keeping previous data: {}",
+                    failed_path.display()
+                ),
             );
         }
 

@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 bevy_ecs.workspace = true
 engine-assets = { path = "../engine-assets" }
+engine-project = { path = "../engine-project" }
 engine-core = { path = "../engine-core" }
 engine-diagnostics = { path = "../engine-diagnostics" }
 engine-math = { path = "../engine-math" }
