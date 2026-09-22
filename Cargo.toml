@@ -12,6 +12,8 @@ members = [
     "crates/engine-input",
     "crates/engine-assets",
     "crates/engine-project",
+    "crates/engine-runner",
+    "crates/starman-cli",
     "crates/engine-math",
     "examples/game-runner",
     "examples/engine-smoke",
@@ -44,6 +46,7 @@ ron = "0.8"
 notify = "6"
 uuid = { version = "1", features = ["v4", "v5", "serde"] }
 blake3 = "1"
+clap = { version = "4", features = ["derive"] }
 gilrs = "0.11"
 log = "0.4"
 env_logger = "0.11"
