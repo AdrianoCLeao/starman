@@ -254,6 +254,10 @@ pub struct HotReloadReport {
     /// Scenes changed on disk. Nothing is reloaded automatically; the
     /// consumer decides what to do.
     pub scenes: Vec<PathBuf>,
+    /// Lua (or other) scripts changed on disk.
+    pub scripts: Vec<PathBuf>,
+    /// Native plugin libraries changed on disk.
+    pub plugins: Vec<PathBuf>,
     /// Files that disappeared. Loaded payloads are kept.
     pub removed: Vec<PathBuf>,
     /// Assets whose reload failed; their previous payload is kept.
@@ -739,6 +743,8 @@ impl AssetServer {
                     }
                 }
                 AssetChange::Scene(path) => report.scenes.push(path),
+                AssetChange::Script(path) => report.scripts.push(path),
+                AssetChange::Plugin(path) => report.plugins.push(path),
                 AssetChange::Removed(path) => report.removed.push(path),
                 AssetChange::Other(_) => {}
             }

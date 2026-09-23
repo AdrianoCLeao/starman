@@ -51,6 +51,10 @@ pub enum AssetChange {
     /// Any `.ron` data file that is not a scene (materials today).
     Material(PathBuf),
     Scene(PathBuf),
+    /// Lua (or other) script under a project scripts root.
+    Script(PathBuf),
+    /// Native plugin dynamic library (`.dll` / `.so` / `.dylib`).
+    Plugin(PathBuf),
     Other(PathBuf),
     Removed(PathBuf),
 }
@@ -62,6 +66,8 @@ impl AssetChange {
             | Self::Mesh(path)
             | Self::Material(path)
             | Self::Scene(path)
+            | Self::Script(path)
+            | Self::Plugin(path)
             | Self::Other(path)
             | Self::Removed(path) => path,
         }
@@ -88,6 +94,8 @@ fn classify(path: PathBuf) -> AssetChange {
         "png" | "jpg" | "jpeg" => AssetChange::Texture(path),
         "glb" | "gltf" => AssetChange::Mesh(path),
         "ron" => AssetChange::Material(path),
+        "lua" => AssetChange::Script(path),
+        "dll" | "so" | "dylib" => AssetChange::Plugin(path),
         _ => AssetChange::Other(path),
     }
 }
@@ -356,6 +364,14 @@ mod tests {
         assert!(matches!(
             classify("a/notes.txt".into()),
             AssetChange::Other(_)
+        ));
+        assert!(matches!(
+            classify("scripts/main.lua".into()),
+            AssetChange::Script(_)
+        ));
+        assert!(matches!(
+            classify("plugins/libexample.dylib".into()),
+            AssetChange::Plugin(_)
         ));
     }
 }

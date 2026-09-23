@@ -93,6 +93,8 @@ impl Project {
                     entry_scene_path.display()
                 ));
             }
+
+            validate_scripts_and_plugins(&paths, manifest, &mut report);
         }
 
         for (label, dir) in [
@@ -178,6 +180,75 @@ fn read_manifest(paths: &ProjectPaths) -> Result<ProjectManifest> {
     }
 
     Ok(manifest)
+}
+
+fn validate_scripts_and_plugins(
+    paths: &ProjectPaths,
+    manifest: &ProjectManifest,
+    report: &mut ValidationReport,
+) {
+    let root = paths.root();
+
+    if let Some(entry) = &manifest.scripts.entry {
+        let entry_path = root.join(entry);
+        if !entry_path.is_file() {
+            report.push_error(format!(
+                "scripts.entry '{}' does not exist",
+                entry_path.display()
+            ));
+        }
+    }
+
+    for script_root in manifest.scripts.effective_roots() {
+        let dir = root.join(&script_root);
+        if !dir.is_dir() {
+            report.push_warning(format!(
+                "scripts root '{}' does not exist yet",
+                dir.display()
+            ));
+        }
+    }
+
+    for grant in &manifest.permissions.filesystem {
+        if grant.contains("..") {
+            report.push_error(format!(
+                "permissions.filesystem grant '{grant}' must not contain '..'"
+            ));
+        }
+    }
+
+    for plugin in &manifest.plugins {
+        let plugin_dir = manifest.resolve_plugin_dir(root, plugin);
+        if !plugin_dir.exists() {
+            report.push_warning(format!(
+                "plugin '{}' path '{}' does not exist yet",
+                plugin.name,
+                plugin_dir.display()
+            ));
+            continue;
+        }
+        if plugin_dir.is_dir() {
+            if engine_plugin::find_plugin_library(&plugin_dir, &plugin.name).is_none() {
+                report.push_warning(format!(
+                    "plugin '{}' directory '{}' has no loadable library yet (build the cdylib first)",
+                    plugin.name,
+                    plugin_dir.display()
+                ));
+            }
+        } else if plugin_dir.is_file() {
+            let ext = plugin_dir
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            if !matches!(ext, "dll" | "so" | "dylib") {
+                report.push_error(format!(
+                    "plugin '{}' path '{}' is not a dynamic library",
+                    plugin.name,
+                    plugin_dir.display()
+                ));
+            }
+        }
+    }
 }
 
 fn write_manifest(paths: &ProjectPaths, manifest: &ProjectManifest) -> Result<()> {

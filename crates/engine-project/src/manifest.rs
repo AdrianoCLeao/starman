@@ -3,6 +3,7 @@
 //! settings, per ADR 0001.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use engine_core::ProjectId;
 use serde::{Deserialize, Serialize};
@@ -13,15 +14,82 @@ use serde::{Deserialize, Serialize};
 /// it, not by this crate.
 pub type ProjectSettings = BTreeMap<String, ron::Value>;
 
-/// A declared dependency on an engine or third-party plugin. The ABI to
-/// actually load plugins is M3 work (ADR 0005); for now this is only a
-/// declaration recorded in the manifest.
+/// A declared dependency on an engine or third-party plugin.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PluginRef {
     pub name: String,
     /// A loose version requirement string (e.g. `"^0.1"`). Not yet enforced.
     #[serde(default)]
     pub version_req: Option<String>,
+    /// Project-relative path to the plugin directory or library file.
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+/// Lua script roots and optional entry chunk.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
+pub struct ScriptsConfig {
+    #[serde(default)]
+    pub entry: Option<String>,
+    #[serde(default)]
+    pub roots: Vec<String>,
+}
+
+impl ScriptsConfig {
+    pub fn has_scripts(&self) -> bool {
+        self.entry.is_some() || !self.roots.is_empty()
+    }
+
+    pub fn effective_roots(&self) -> Vec<String> {
+        if self.roots.is_empty() {
+            if self.entry.is_some() {
+                vec!["scripts/".to_owned()]
+            } else {
+                Vec::new()
+            }
+        } else {
+            self.roots.clone()
+        }
+    }
+}
+
+/// Deny-by-default permission grants for scripts and plugins.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct PermissionsConfig {
+    #[serde(default = "default_filesystem_grants")]
+    pub filesystem: Vec<String>,
+    #[serde(default)]
+    pub process: bool,
+    #[serde(default)]
+    pub network: bool,
+}
+
+fn default_filesystem_grants() -> Vec<String> {
+    vec![
+        "assets/**".to_owned(),
+        "scripts/**".to_owned(),
+        "saves/**".to_owned(),
+    ]
+}
+
+impl Default for PermissionsConfig {
+    fn default() -> Self {
+        Self {
+            filesystem: default_filesystem_grants(),
+            process: false,
+            network: false,
+        }
+    }
+}
+
+impl PermissionsConfig {
+    pub fn to_plugin_permissions(&self) -> engine_plugin::ProjectPermissions {
+        engine_plugin::ProjectPermissions {
+            filesystem: self.filesystem.clone(),
+            process: self.process,
+            network: self.network,
+        }
+    }
 }
 
 /// The project manifest, persisted as `project.ron` at the project root.
@@ -35,6 +103,10 @@ pub struct ProjectManifest {
     pub entry_scene: String,
     #[serde(default)]
     pub plugins: Vec<PluginRef>,
+    #[serde(default)]
+    pub scripts: ScriptsConfig,
+    #[serde(default)]
+    pub permissions: PermissionsConfig,
     #[serde(default)]
     pub settings: ProjectSettings,
     /// Build target identifiers this project targets (e.g. `"windows"`,
@@ -56,8 +128,18 @@ impl ProjectManifest {
             name: name.into(),
             entry_scene: entry_scene.into(),
             plugins: Vec::new(),
+            scripts: ScriptsConfig::default(),
+            permissions: PermissionsConfig::default(),
             settings: ProjectSettings::new(),
             targets: Vec::new(),
+        }
+    }
+
+    /// Resolve a plugin's on-disk library path relative to the project root.
+    pub fn resolve_plugin_dir(&self, project_root: &std::path::Path, plugin: &PluginRef) -> PathBuf {
+        match &plugin.path {
+            Some(path) => project_root.join(path),
+            None => project_root.join("plugins").join(&plugin.name),
         }
     }
 }
@@ -68,7 +150,14 @@ mod tests {
 
     #[test]
     fn round_trips_through_ron() {
-        let manifest = ProjectManifest::new("My Game", "scenes/main.scene.ron");
+        let mut manifest = ProjectManifest::new("My Game", "scenes/main.scene.ron");
+        manifest.scripts.entry = Some("scripts/main.lua".to_owned());
+        manifest.scripts.roots = vec!["scripts/".to_owned()];
+        manifest.plugins.push(PluginRef {
+            name: "example_gameplay".to_owned(),
+            version_req: Some("^0.1".to_owned()),
+            path: Some("plugins/example_gameplay".to_owned()),
+        });
         let serialized = ron::ser::to_string_pretty(&manifest, ron::ser::PrettyConfig::default())
             .expect("manifest should serialize");
         let deserialized: ProjectManifest =
@@ -88,5 +177,8 @@ mod tests {
         assert!(manifest.plugins.is_empty());
         assert!(manifest.settings.is_empty());
         assert!(manifest.targets.is_empty());
+        assert!(!manifest.scripts.has_scripts());
+        assert!(!manifest.permissions.process);
+        assert!(!manifest.permissions.network);
     }
 }

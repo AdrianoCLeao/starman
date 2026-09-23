@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 engine-assets = { path = "../engine-assets" }
 engine-core = { path = "../engine-core" }
+engine-plugin = { path = "../engine-plugin" }
 log.workspace = true
 ron.workspace = true
 serde.workspace = true
