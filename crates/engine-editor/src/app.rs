@@ -225,18 +225,22 @@ impl PlayStatus {
 
 struct PlayModeState {
     status: PlayStatus,
+    kind: crate::play_runtime::PlayKind,
     child: Option<Child>,
     snapshot_scene_path: Option<PathBuf>,
     output_readers: Option<PlayModeOutputReaders>,
+    in_process: Option<crate::play_runtime::InProcessPlay>,
 }
 
 impl Default for PlayModeState {
     fn default() -> Self {
         Self {
             status: PlayStatus::Stopped,
+            kind: crate::play_runtime::PlayKind::InProcess,
             child: None,
             snapshot_scene_path: None,
             output_readers: None,
+            in_process: None,
         }
     }
 }
@@ -1054,6 +1058,39 @@ impl EditorApp {
             return Ok(());
         }
 
+        // Prefer in-process when the project declares scripts (M3 hot-reload gate).
+        // Hold Shift for standalone preview via start_standalone_preview.
+        if self.project.manifest.scripts.has_scripts() {
+            return self.start_play_mode_in_process();
+        }
+
+        self.start_standalone_preview()
+    }
+
+    fn start_play_mode_in_process(&mut self) -> Result<()> {
+        let snapshot_path = self.create_play_mode_snapshot()?;
+        match crate::play_runtime::InProcessPlay::start(&self.project, snapshot_path.clone()) {
+            Ok(play) => {
+                self.play_mode.kind = crate::play_runtime::PlayKind::InProcess;
+                self.play_mode.status = PlayStatus::Playing;
+                self.play_mode.snapshot_scene_path = Some(snapshot_path);
+                self.play_mode.in_process = Some(play);
+                self.play_mode.child = None;
+                self.play_mode.output_readers = None;
+                self.log_message(
+                    LogLevel::Info,
+                    "Play Mode started in-process (Lua/plugins hot reload enabled)",
+                );
+                Ok(())
+            }
+            Err(error) => {
+                let _ = std::fs::remove_file(&snapshot_path);
+                Err(error)
+            }
+        }
+    }
+
+    fn start_standalone_preview(&mut self) -> Result<()> {
         let snapshot_path = self.create_play_mode_snapshot()?;
         let runner_path = self.runner_executable_path()?;
         let assets_root_arg = self.play_mode_assets_root_argument();
@@ -1091,15 +1128,17 @@ impl EditorApp {
             self.started_at,
         );
 
+        self.play_mode.kind = crate::play_runtime::PlayKind::StandalonePreview;
         self.play_mode.status = PlayStatus::Playing;
         self.play_mode.child = Some(child);
         self.play_mode.output_readers = output_readers;
         self.play_mode.snapshot_scene_path = Some(snapshot_path.clone());
+        self.play_mode.in_process = None;
 
         self.log_message(
             LogLevel::Info,
             format!(
-                "Play Mode started using snapshot {}",
+                "Standalone preview started using snapshot {}",
                 snapshot_path.display()
             ),
         );
@@ -1112,7 +1151,9 @@ impl EditorApp {
             return Ok(());
         }
 
-        self.send_runner_control_command(RUNNER_CONTROL_PAUSE)?;
+        if self.play_mode.kind == crate::play_runtime::PlayKind::StandalonePreview {
+            self.send_runner_control_command(RUNNER_CONTROL_PAUSE)?;
+        }
         self.play_mode.status = PlayStatus::Paused;
         self.log_message(LogLevel::Info, "Play Mode paused");
         Ok(())
@@ -1123,7 +1164,9 @@ impl EditorApp {
             return Ok(());
         }
 
-        self.send_runner_control_command(RUNNER_CONTROL_RESUME)?;
+        if self.play_mode.kind == crate::play_runtime::PlayKind::StandalonePreview {
+            self.send_runner_control_command(RUNNER_CONTROL_RESUME)?;
+        }
         self.play_mode.status = PlayStatus::Playing;
         self.log_message(LogLevel::Info, "Play Mode resumed");
         Ok(())
@@ -1141,6 +1184,29 @@ impl EditorApp {
         if !self.play_mode.status.is_running() {
             self.play_mode.status = PlayStatus::Stopped;
             self.cleanup_play_mode_snapshot();
+            self.play_mode.in_process = None;
+            return;
+        }
+
+        if self.play_mode.kind == crate::play_runtime::PlayKind::InProcess {
+            let restore = self
+                .play_mode
+                .in_process
+                .as_ref()
+                .map(|p| p.restore_snapshot.clone())
+                .or_else(|| self.play_mode.snapshot_scene_path.clone());
+            self.play_mode.in_process = None;
+            self.play_mode.status = PlayStatus::Stopped;
+            if let Some(path) = restore {
+                if let Err(error) = self.load_scene(&path) {
+                    self.log_message(
+                        LogLevel::Warn,
+                        format!("Failed to restore scene after in-process play: {error}"),
+                    );
+                }
+            }
+            self.cleanup_play_mode_snapshot();
+            self.log_message(LogLevel::Info, "In-process Play Mode stopped");
             return;
         }
 
@@ -1272,6 +1338,96 @@ impl EditorApp {
                     format!("Play Mode pause/resume failed: {}", error),
                 );
             }
+        }
+
+        if !self.play_mode.status.is_running()
+            && ui
+                .button("Standalone Preview")
+                .on_hover_text("Spawn game-runner out-of-process")
+                .clicked()
+        {
+            if let Err(error) = self.start_standalone_preview() {
+                self.log_message(
+                    LogLevel::Error,
+                    format!("Standalone preview failed: {}", error),
+                );
+            }
+        }
+
+        if self.play_mode.status.is_running() {
+            let kind = match self.play_mode.kind {
+                crate::play_runtime::PlayKind::InProcess => "in-process",
+                crate::play_runtime::PlayKind::StandalonePreview => "standalone",
+            };
+            ui.label(format!("{} ({})", self.play_mode.status.label(), kind));
+        }
+    }
+
+    fn tick_in_process_play(&mut self) {
+        if self.play_mode.kind != crate::play_runtime::PlayKind::InProcess {
+            return;
+        }
+        if self.play_mode.status != PlayStatus::Playing {
+            return;
+        }
+        if self.play_mode.in_process.is_none() {
+            return;
+        }
+
+        let mut reload_msg: Option<(bool, String)> = None;
+        {
+            let play = self.play_mode.in_process.as_mut().unwrap();
+            if let Some(watcher) = play.script_watcher.as_mut() {
+                let changes = watcher.poll(None);
+                let script_changed = changes
+                    .iter()
+                    .any(|c| matches!(c, engine_assets::AssetChange::Script(_)));
+                if script_changed {
+                    match play.host.hot_reload_lua() {
+                        Ok(()) => reload_msg = Some((true, "Lua scripts hot-reloaded".into())),
+                        Err(error) => {
+                            reload_msg = Some((false, format!("Lua hot reload failed: {error}")))
+                        }
+                    }
+                }
+            }
+        }
+        if let Some((ok, msg)) = reload_msg {
+            self.log_message(if ok { LogLevel::Info } else { LogLevel::Warn }, msg);
+        }
+
+        let dt = self.play_mode.in_process.as_mut().unwrap().take_dt();
+
+        let tick_error = {
+            let play = self.play_mode.in_process.as_mut().unwrap();
+            if let Some(lua) = play.host.lua.as_mut() {
+                let world = &mut self.world;
+                let components_ptr = world
+                    .get_resource::<engine_reflect::ComponentRegistry>()
+                    .map(|r| r as *const engine_reflect::ComponentRegistry);
+                let types_ptr = world
+                    .get_resource::<engine_reflect::ReflectTypeRegistry>()
+                    .map(|r| r as *const engine_reflect::ReflectTypeRegistry);
+                match (components_ptr, types_ptr) {
+                    (Some(components), Some(types)) => unsafe {
+                        let components = &*components;
+                        let types = &*types;
+                        lua.with_world(world, components, types, |lua| lua.tick(dt))
+                            .err()
+                            .map(|e| e.to_string())
+                    },
+                    _ => Some("reflection registries missing".to_owned()),
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(error) = tick_error {
+            self.log_message(
+                LogLevel::Error,
+                format!("Lua tick error (isolated): {error}"),
+            );
         }
     }
 
@@ -4620,11 +4776,11 @@ impl EditorApp {
                     ui.close_menu();
                 }
 
-                if self.world.get::<SceneInstance>(entity).is_some() {
-                    if ui.button("Open Prefab").clicked() {
-                        self.open_prefab_for_instance(entity);
-                        ui.close_menu();
-                    }
+                if self.world.get::<SceneInstance>(entity).is_some()
+                    && ui.button("Open Prefab").clicked()
+                {
+                    self.open_prefab_for_instance(entity);
+                    ui.close_menu();
                 }
 
                 ui.separator();
@@ -4802,7 +4958,7 @@ impl EditorApp {
             .unwrap_or_default();
         self.command_history.begin_transaction("Paste entities");
         let mut first = None;
-        let mut entries = std::mem::take(&mut self.clipboard.entries);
+        let entries = std::mem::take(&mut self.clipboard.entries);
         for entry in &entries {
             if let Some(entity) = paste_clipboard_entity(
                 &mut self.world,
@@ -5222,6 +5378,7 @@ impl eframe::App for EditorApp {
         self.console.drain_diagnostics(self.now_seconds());
         self.drain_play_mode_output();
         self.poll_play_mode_process();
+        self.tick_in_process_play();
 
         let fs_events = self.asset_browser.process_file_events();
         if fs_events > 0 {

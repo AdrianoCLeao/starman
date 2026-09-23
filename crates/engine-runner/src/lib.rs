@@ -24,10 +24,12 @@ use engine_core::{
     WindowConfig, WindowEvent,
 };
 use engine_input::{InputModule, InputState};
+use engine_lua::ExtensibilityHost;
 use engine_physics::{
     physics_fixed_update_systems_3d, register_physics_reflection_types, ColliderEntityMap3D,
     PhysicsEntityHandles3D, PhysicsStepConfig3D, PhysicsWorld3D,
 };
+use engine_project::Project;
 use engine_reflect::{
     with_reflection_registries, ComponentRegistry, ReflectMetadataRegistry, ReflectTypeRegistry,
 };
@@ -70,6 +72,8 @@ pub struct RunnerOptions {
     /// without one, reloading payloads only (matches `game-runner`'s
     /// current behavior).
     pub database: Option<AssetDatabase>,
+    /// Optional project root for plugins/Lua bootstrap (M3).
+    pub project_root: Option<std::path::PathBuf>,
 }
 
 impl RunnerOptions {
@@ -79,6 +83,7 @@ impl RunnerOptions {
             window: WindowConfig::default(),
             control_rx: None,
             database: None,
+            project_root: None,
         }
     }
 
@@ -96,6 +101,11 @@ impl RunnerOptions {
         self.database = Some(database);
         self
     }
+
+    pub fn with_project_root(mut self, project_root: impl Into<std::path::PathBuf>) -> Self {
+        self.project_root = Some(project_root.into());
+        self
+    }
 }
 
 pub struct RunnerModules {
@@ -105,6 +115,7 @@ pub struct RunnerModules {
     assets: AssetModule,
     control_rx: Option<Receiver<RunnerControlCommand>>,
     stop_requested: bool,
+    extensibility: Option<ExtensibilityHost>,
 }
 
 impl RunnerModules {
@@ -112,12 +123,38 @@ impl RunnerModules {
         assets_root: impl Into<String>,
         control_rx: Option<Receiver<RunnerControlCommand>>,
         database: Option<AssetDatabase>,
+        project_root: Option<std::path::PathBuf>,
     ) -> Result<Self> {
         let mut assets = AssetModule::new(assets_root);
         let _ = assets.load_stub("textures/placeholder.png")?;
         if let Some(database) = database {
             assets.asset_server_mut().attach_database(database);
         }
+
+        let extensibility = if let Some(root) = project_root {
+            match Project::open(&root) {
+                Ok(project) => {
+                    let mut host =
+                        ExtensibilityHost::bootstrap(project.paths.root(), &project.manifest)?;
+                    if let Err(error) = host.load_lua_entry() {
+                        log::warn!(
+                            target: "engine::runner",
+                            "failed to load Lua entry: {error}"
+                        );
+                    }
+                    Some(host)
+                }
+                Err(error) => {
+                    log::warn!(
+                        target: "engine::runner",
+                        "project open for extensibility failed: {error}"
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         Ok(Self {
             renderer: RenderModule::new(),
@@ -126,6 +163,7 @@ impl RunnerModules {
             assets,
             control_rx,
             stop_requested: false,
+            extensibility,
         })
     }
 
@@ -178,6 +216,33 @@ impl RunnerModules {
     pub fn asset_server_mut(&mut self) -> &mut AssetServer {
         self.assets.asset_server_mut()
     }
+
+    fn tick_lua(&mut self, world: &mut World, dt: f32) {
+        let Some(host) = self.extensibility.as_mut() else {
+            return;
+        };
+        let Some(lua) = host.lua.as_mut() else {
+            return;
+        };
+        let components_ptr = world
+            .get_resource::<ComponentRegistry>()
+            .map(|r| r as *const ComponentRegistry);
+        let types_ptr = world
+            .get_resource::<ReflectTypeRegistry>()
+            .map(|r| r as *const ReflectTypeRegistry);
+        let (Some(components), Some(types)) = (components_ptr, types_ptr) else {
+            return;
+        };
+        // Safety: exclusive world borrow for the duration of the Lua tick.
+        let result = unsafe {
+            let components = &*components;
+            let types = &*types;
+            lua.with_world(world, components, types, |lua| lua.tick(dt))
+        };
+        if let Err(error) = result {
+            log::error!(target: "engine::runner", "Lua tick error (isolated): {error}");
+        }
+    }
 }
 
 impl EngineModules for RunnerModules {
@@ -196,6 +261,14 @@ impl EngineModules for RunnerModules {
         }
 
         self.process_control_messages(world);
+
+        let playing = world
+            .get_resource::<RunnerPlaybackState>()
+            .map(|s| !s.paused)
+            .unwrap_or(true);
+        if playing {
+            self.tick_lua(world, 1.0 / 60.0);
+        }
         Ok(())
     }
 
@@ -217,6 +290,15 @@ impl EngineModules for RunnerModules {
                 reload.meshes.len(),
                 reload.materials.len()
             );
+        }
+        if !reload.scripts.is_empty() {
+            if let Some(host) = self.extensibility.as_mut() {
+                if let Err(error) = host.hot_reload_lua() {
+                    log::warn!(target: "engine::runner", "Lua hot reload failed: {error}");
+                } else {
+                    log::info!(target: "engine::runner", "Lua scripts hot-reloaded");
+                }
+            }
         }
 
         self.audio.update()
@@ -362,7 +444,12 @@ pub fn prepare_scene_world(
         });
     }
 
-    let modules = RunnerModules::new(assets_root, options.control_rx, options.database)?;
+    let modules = RunnerModules::new(
+        assets_root,
+        options.control_rx,
+        options.database,
+        options.project_root,
+    )?;
 
     let config = EngineConfig::with_app_name(options.app_name).with_window_config(options.window);
 

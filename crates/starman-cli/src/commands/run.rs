@@ -35,7 +35,9 @@ pub(crate) fn run_with(
     let database = AssetDatabase::open(project.paths.assets_dir(), project.paths.imported_dir())
         .map_err(engine_error)?;
 
-    let options = RunnerOptions::new(project.manifest.name.clone()).with_database(database);
+    let options = RunnerOptions::new(project.manifest.name.clone())
+        .with_database(database)
+        .with_project_root(project.paths.root());
     run_fn(&assets_root, &scene_path, options).map_err(engine_error)
 }
 

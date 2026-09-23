@@ -63,6 +63,10 @@ impl Selection {
         self.secondary.len() + usize::from(self.primary.is_some())
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn contains(&self, entity: Entity) -> bool {
         self.primary == Some(entity) || self.secondary.contains(&entity)
     }

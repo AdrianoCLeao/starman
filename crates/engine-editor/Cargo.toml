@@ -11,8 +11,10 @@ engine-assets = { path = "../engine-assets" }
 engine-project = { path = "../engine-project" }
 engine-core = { path = "../engine-core" }
 engine-diagnostics = { path = "../engine-diagnostics" }
+engine-lua = { path = "../engine-lua" }
 engine-math = { path = "../engine-math" }
 engine-physics = { path = "../engine-physics" }
+engine-plugin = { path = "../engine-plugin" }
 engine-render = { path = "../engine-render" }
 engine-reflect = { path = "../engine-reflect" }
 engine-scene = { path = "../engine-scene" }

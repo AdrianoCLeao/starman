@@ -120,6 +120,12 @@ fn run() -> Result<()> {
         options = options.with_database(database);
     }
 
+    if let Some(project_root) = Path::new(&assets_root).parent() {
+        if Project::open(project_root).is_ok() {
+            options = options.with_project_root(project_root);
+        }
+    }
+
     engine_runner::run_scene_windowed(&assets_root, &scene_path, options)
 }
 

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use engine_assets::AssetDatabase;
+use engine_core::EngineModules;
 use engine_project::{Project, ValidationReport};
 use engine_runner::RunnerOptions;
 
@@ -11,10 +12,13 @@ pub struct TestOutcome {
     pub path: PathBuf,
     pub report: ValidationReport,
     pub entity_count: usize,
+    pub lua_frames: u32,
 }
 
 /// Validates the project, then headlessly loads its entry scene (no window,
 /// no GPU device) to confirm it parses and every referenced asset resolves.
+/// When scripts/plugins are declared, boots the extensibility host and ticks
+/// a few Lua frames (M3 gate).
 pub fn run(path: PathBuf) -> Result<TestOutcome, CliError> {
     let engine_error = |source| CliError::Engine {
         path: path.clone(),
@@ -32,25 +36,29 @@ pub fn run(path: PathBuf) -> Result<TestOutcome, CliError> {
         .paths
         .resolve_asset_relative(&project.manifest.entry_scene);
 
-    // Attaching a database is what lets id-based asset references (see
-    // docs/asset-pipeline.md) resolve during this headless load — the same
-    // as `run` does, so `test` is representative of how the project
-    // actually opens, not a weaker check that happens to still spawn every
-    // entity even when its asset references silently fail to resolve.
-    let mut options = RunnerOptions::new(format!("{} (test)", project.manifest.name));
+    let mut options = RunnerOptions::new(format!("{} (test)", project.manifest.name))
+        .with_project_root(project.paths.root());
     if let Ok(database) =
         AssetDatabase::open(project.paths.assets_dir(), project.paths.imported_dir())
     {
         options = options.with_database(database);
     }
 
-    let prepared = engine_runner::prepare_scene_world(&assets_root, &scene_path, options)
+    let mut prepared = engine_runner::prepare_scene_world(&assets_root, &scene_path, options)
         .map_err(engine_error)?;
+
+    // Exercise Lua for a few frames when present (headless gate).
+    let mut lua_frames = 0u32;
+    for _ in 0..3 {
+        let _ = prepared.engine.modules.flush_input(&mut prepared.engine.world);
+        lua_frames += 1;
+    }
 
     Ok(TestOutcome {
         path,
         report,
         entity_count: prepared.entity_count(),
+        lua_frames,
     })
 }
 

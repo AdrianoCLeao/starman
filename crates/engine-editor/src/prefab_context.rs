@@ -24,6 +24,7 @@ impl PrefabEditStack {
         self.frames.push(frame);
     }
 
+    #[allow(dead_code)]
     pub fn pop(&mut self) -> Option<PrefabEditFrame> {
         self.frames.pop()
     }
@@ -32,6 +33,7 @@ impl PrefabEditStack {
         self.frames.last()
     }
 
+    #[allow(dead_code)]
     pub fn current_mut(&mut self) -> Option<&mut PrefabEditFrame> {
         self.frames.last_mut()
     }
@@ -40,6 +42,7 @@ impl PrefabEditStack {
         self.frames.is_empty()
     }
 
+    #[allow(dead_code)]
     pub fn breadcrumbs(&self) -> Vec<&str> {
         self.frames.iter().map(|f| f.label.as_str()).collect()
     }

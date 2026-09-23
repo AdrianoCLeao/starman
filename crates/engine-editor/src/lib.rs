@@ -6,6 +6,7 @@ pub mod commands;
 pub mod config;
 pub mod inspector;
 pub mod layout;
+mod play_runtime;
 mod prefab_context;
 pub mod selection;
 pub mod viewport;
