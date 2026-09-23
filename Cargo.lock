@@ -823,6 +823,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6bb31b46c14244e20ee9984b11bf5c992b91fb6939fea616e3512c8baecdbe5f"
+dependencies = [
+ "memchr",
+ "serde_core",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1731,8 +1741,10 @@ dependencies = [
  "engine-assets",
  "engine-core",
  "engine-math",
+ "engine-plugin",
  "engine-reflect",
  "engine-render",
+ "serde_json",
 ]
 
 [[package]]
@@ -1778,8 +1790,10 @@ dependencies = [
  "engine-assets",
  "engine-core",
  "engine-diagnostics",
+ "engine-lua",
  "engine-math",
  "engine-physics",
+ "engine-plugin",
  "engine-project",
  "engine-reflect",
  "engine-render",
@@ -1806,6 +1820,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-lua"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "engine-core",
+ "engine-plugin",
+ "engine-project",
+ "engine-reflect",
+ "log",
+ "mlua",
+ "serde",
+ "serde_json",
+ "starman-plugin-sdk",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "engine-math"
 version = "0.1.0"
 dependencies = [
@@ -1827,11 +1858,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-plugin"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "engine-core",
+ "engine-reflect",
+ "libloading",
+ "log",
+ "serde",
+ "serde_json",
+ "starman-plugin-sdk",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
 name = "engine-project"
 version = "0.1.0"
 dependencies = [
  "engine-assets",
  "engine-core",
+ "engine-plugin",
  "log",
  "ron",
  "serde",
@@ -1882,7 +1930,9 @@ dependencies = [
  "engine-audio",
  "engine-core",
  "engine-input",
+ "engine-lua",
  "engine-physics",
+ "engine-project",
  "engine-reflect",
  "engine-render",
  "engine-scene",
@@ -1962,6 +2012,12 @@ dependencies = [
  "log",
  "regex",
 ]
+
+[[package]]
+name = "env_home"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7f84e12ccf0a7ddc17a6c41c93326024c42920d7ee630d04950e6926645c0fe"
 
 [[package]]
 name = "env_logger"
@@ -2053,6 +2109,13 @@ checksum = "8be9f3dfaaffdae2972880079a491a1a8bb7cbed0b8dd7a347f668b4150a3b93"
 dependencies = [
  "event-listener",
  "pin-project-lite",
+]
+
+[[package]]
+name = "example_gameplay"
+version = "0.1.0"
+dependencies = [
+ "starman-plugin-sdk",
 ]
 
 [[package]]
@@ -3134,6 +3197,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
+name = "lua-src"
+version = "547.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1edaf29e3517b49b8b746701e5648ccb5785cde1c119062cbabbc5d5cd115e42"
+dependencies = [
+ "cc",
+]
+
+[[package]]
+name = "luajit-src"
+version = "210.5.12+a4f56a4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b3a8e7962a5368d5f264d045a5a255e90f9aa3fc1941ae15a8d2940d42cac671"
+dependencies = [
+ "cc",
+ "which",
+]
+
+[[package]]
 name = "mach2"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3241,6 +3323,37 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "mlua"
+version = "0.10.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c1f5f8fbebc7db5f671671134b9321c4b9aa9adeafccfd9a8c020ae45c6a35d0"
+dependencies = [
+ "bstr",
+ "either",
+ "erased-serde",
+ "mlua-sys",
+ "num-traits",
+ "parking_lot",
+ "rustc-hash 2.1.2",
+ "rustversion",
+ "serde",
+ "serde-value",
+]
+
+[[package]]
+name = "mlua-sys"
+version = "0.6.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "380c1f7e2099cafcf40e51d3a9f20a346977587aa4d012eae1f043149a728a93"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "lua-src",
+ "luajit-src",
+ "pkg-config",
 ]
 
 [[package]]
@@ -3863,6 +3976,15 @@ dependencies = [
 
 [[package]]
 name = "ordered-float"
+version = "2.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68f19d67e5a2795c94e73e0bb1cc1a7edeb2e28efd39e2e1c9b7a40c1108b11c"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "ordered-float"
 version = "4.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
@@ -3934,7 +4056,7 @@ dependencies = [
  "nalgebra",
  "num-derive",
  "num-traits",
- "ordered-float",
+ "ordered-float 4.6.0",
  "rustc-hash 2.1.2",
  "simba",
  "slab",
@@ -3959,7 +4081,7 @@ dependencies = [
  "nalgebra",
  "num-derive",
  "num-traits",
- "ordered-float",
+ "ordered-float 4.6.0",
  "rstar",
  "rustc-hash 2.1.2",
  "simba",
@@ -4309,7 +4431,7 @@ dependencies = [
  "nalgebra",
  "num-derive",
  "num-traits",
- "ordered-float",
+ "ordered-float 4.6.0",
  "parry2d",
  "rustc-hash 2.1.2",
  "simba",
@@ -4332,7 +4454,7 @@ dependencies = [
  "nalgebra",
  "num-derive",
  "num-traits",
- "ordered-float",
+ "ordered-float 4.6.0",
  "parry3d",
  "rustc-hash 2.1.2",
  "simba",
@@ -4645,6 +4767,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-value"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3a1a3341211875ef120e117ea7fd5228530ae7e7036a779fdc9117be6b3282c"
+dependencies = [
+ "ordered-float 2.10.1",
+ "serde",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4901,6 +5033,13 @@ dependencies = [
  "env_logger",
  "image",
  "log",
+]
+
+[[package]]
+name = "starman-plugin-sdk"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.11.0",
 ]
 
 [[package]]
@@ -5801,7 +5940,7 @@ dependencies = [
  "ndk-sys 0.5.0+25.2.9519653",
  "objc",
  "once_cell",
- "ordered-float",
+ "ordered-float 4.6.0",
  "parking_lot",
  "profiling",
  "range-alloc",
@@ -5827,6 +5966,18 @@ dependencies = [
  "js-sys",
  "log",
  "web-sys",
+]
+
+[[package]]
+name = "which"
+version = "7.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "24d643ce3fd3e5b54854602a080f34fb10ab75e0b813ee32d00ca2b44fa74762"
+dependencies = [
+ "either",
+ "env_home",
+ "rustix 1.1.4",
+ "winsafe",
 ]
 
 [[package]]
@@ -6365,6 +6516,12 @@ checksum = "09dac053f1cd375980747450bfc7250c264eaae0583872e845c0c7cd578872b5"
 dependencies = [
  "memchr",
 ]
+
+[[package]]
+name = "winsafe"
+version = "0.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
 name = "wit-bindgen"

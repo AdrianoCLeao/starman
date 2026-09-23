@@ -12,6 +12,9 @@ members = [
     "crates/engine-input",
     "crates/engine-assets",
     "crates/engine-scene",
+    "crates/engine-plugin",
+    "crates/starman-plugin-sdk",
+    "crates/engine-lua",
     "crates/engine-project",
     "crates/engine-runner",
     "crates/starman-cli",
@@ -19,6 +22,7 @@ members = [
     "examples/game-runner",
     "examples/engine-smoke",
     "examples/sandbox",
+    "examples/plugins/example_gameplay",
     "tools/engine-benchmarks",
 ]
 
@@ -64,3 +68,6 @@ egui-wgpu = "0.31"
 egui-winit = "0.31"
 rfd = "0.15"
 dirs = "5"
+libloading = "0.8"
+mlua = { version = "0.10", features = ["lua54", "vendored", "serialize"] }
+glob = "0.3"

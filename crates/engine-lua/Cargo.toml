@@ -1,0 +1,20 @@
+[package]
+name = "engine-lua"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "In-process Lua 5.4 runtime for Starman scripts (M3)"
+
+[dependencies]
+bevy_ecs.workspace = true
+engine-core = { path = "../engine-core" }
+engine-plugin = { path = "../engine-plugin" }
+engine-project = { path = "../engine-project" }
+engine-reflect = { path = "../engine-reflect" }
+log.workspace = true
+mlua.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+starman-plugin-sdk = { path = "../starman-plugin-sdk" }
+thiserror.workspace = true

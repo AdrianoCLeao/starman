@@ -1,0 +1,10 @@
+[package]
+name = "starman-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "C ABI types and helpers for Starman native plugins (ADR 0008)"
+
+[dependencies]
+bitflags = "2"

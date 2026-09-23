@@ -1,0 +1,22 @@
+[package]
+name = "engine-plugin"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Dynamic plugin host, command/query bus, and permissions (M3)"
+
+[dependencies]
+bevy_ecs.workspace = true
+engine-core = { path = "../engine-core" }
+engine-reflect = { path = "../engine-reflect" }
+libloading.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+starman-plugin-sdk = { path = "../starman-plugin-sdk" }
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+engine-core = { path = "../engine-core" }
