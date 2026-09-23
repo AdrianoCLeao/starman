@@ -198,7 +198,7 @@ fn bench_scene_load_with_database(c: &mut Criterion) {
     let mut group = c.benchmark_group("scene_load");
     let (type_registry, component_registry, _) = build_registries();
     let adapter = RenderSceneAdapter;
-    let scene_path = reference_assets_root().join("scenes/example.scene.ron");
+    let scene_path = reference_assets_root().join("scenes/level.scene.ron");
 
     group.bench_function("without_database", |b| {
         b.iter_batched(
@@ -237,7 +237,7 @@ fn bench_scene_load_with_database(c: &mut Criterion) {
                 (root, world, assets)
             },
             |(root, mut world, mut assets)| {
-                let scene_path = root.join("assets/scenes/example.scene.ron");
+                let scene_path = root.join("assets/scenes/level.scene.ron");
                 let mut deserializer = SceneDeserializer::new(
                     &mut world,
                     &component_registry,

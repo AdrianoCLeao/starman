@@ -1,0 +1,25 @@
+(
+    version: 3,
+    name: "crate",
+    entities: [
+        (
+            id: "825a6b16-27bc-433d-a463-925f87b9dde3",
+            name: Some("CrateMesh"),
+            components: {
+                "MeshRenderer": {
+                    "material": "materials/default.ron",
+                    "mesh": "meshes/cube.glb",
+                    "texture": "textures/placeholder.png",
+                },
+                "RenderLayer3D": {},
+                "Transform": {
+                    "rotation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0 },
+                    "scale": { "x": 1.0, "y": 1.0, "z": 1.0 },
+                    "translation": { "x": 0.0, "y": 0.5, "z": 0.0 },
+                },
+                "Visible": {},
+            },
+            children: [],
+        ),
+    ],
+)

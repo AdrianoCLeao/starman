@@ -35,28 +35,15 @@ Uma capacidade só está pronta quando:
 
 ## Estado atual
 
-Com o M1 fechado, a base contém:
+Com o M2 fechado, a base contém tudo do M1 mais:
 
-- workspace Rust modular com crates de core, render, física, áudio, input, assets, project, reflexão, editor e runtime compartilhado (`engine-runner`);
-- ECS e schedules multithreaded baseados em `bevy_ecs`;
-- transform hierarchy, câmeras, janela, fixed update e frame statistics;
-- reflexão de componentes e inspector orientado por metadados;
-- **modelo de projeto**: manifesto versionado (`project.ron`), separação entre `assets/`, cache importado, diagnósticos e build (`crates/engine-project`), com `Project::open/validate/create` e um projeto de referência real (`examples/reference-project`);
-- **identidade persistente**: UUIDs estáveis para projetos, entidades de cena e source assets (`ProjectId`, `EntityId`, `SourceAssetId`), com sub-assets reais (`SubAssetId`) para meshes multi-recurso;
-- **asset database**: metadados de importação versionados (`.meta.ron`), hash de conteúdo, cache content-addressed e grafo de dependências (`crates/engine-assets/src/import`);
-- **referências tipadas**: `MeshRenderer`/`Sprite` persistem por ID quando um `AssetDatabase` está anexado, com resolução por caminho legado preservada para compatibilidade (ver `docs/asset-pipeline.md`);
-- **file watching** com debounce, jobs assíncronos, cancelamento por geração e atualização atômica;
-- **CLI** (`starman-cli`, binário `starman`) com `new`, `validate`, `import`, `run` e `test`;
-- cenas RON versionadas (v1→v2) com migração automática e testes golden-file;
-- renderer `wgpu` com integração de mesh, material, textura, câmera e viewport;
-- física Rapier 2D/3D, áudio Kira e input de teclado, mouse e gamepad;
-- editor `egui` com docking, seleção, gizmos, undo/redo, asset browser, play mode em processo separado, e abertura de projeto via manifesto;
-- hot reload de textura, mesh e material (não mais só textura) e um sandbox executável, ambos project-aware.
+- **cenas aninhadas / prefabs**: `SceneFile` v3 com `SceneInstanceData`, instâncias vivas no world (`engine-scene`), detecção de ciclos, overrides empilhados (apply/revert/promote), diff estrutural, e expansão no runner/editor;
+- edição isolada de prefab com breadcrumb, multi-seleção, clipboard, undo/redo transacional, autosave/recovery crash-safe;
+- projeto de referência recomposto em `scenes/level.scene.ron` → `rooms/arena` → `props/crate` + `props/lamp`.
 
 Os maiores gaps estruturais que restam são:
 
 - não existe ainda um contrato de plugin/ABI estável (M3);
-- cenas ainda não são componíveis (sem cenas aninhadas nem prefabs — M2);
 - o renderer precisa ser separado em extração, preparação, fila e execução antes de crescer (M4);
 - a garantia de referência tipada por ID só vale para cenas já salvas depois da migração — o formato legado por caminho continua lido, mas não é reescrito sozinho por uma leitura (ver "migração ao salvar" em `docs/asset-pipeline.md`);
 - não há ainda uma vertical slice distribuível que prove o workflow completo.
@@ -302,18 +289,7 @@ Esses itens podem entrar depois, por evidência de produto, sem contaminar as fu
 
 ## Próximo ciclo recomendado
 
-Com M0 e M1 fechados, o próximo ciclo inicia M2 (cenas aninhadas e prefabs), nesta ordem:
-
-1. `SceneAsset` e instâncias de cena resolvidas por `EntityId`/`SourceAssetId` (já estáveis desde o M1), sem introduzir nenhum novo identificador efêmero;
-2. cenas aninhadas com detecção de ciclos;
-3. overrides por entidade/componente/campo — aplicar, reverter, promover;
-4. entidades adicionadas/removidas localmente em instâncias, com diff estrutural determinístico;
-5. edição isolada de prefab e breadcrumb de contexto no editor;
-6. clipboard, duplicação, multi-seleção e undo/redo transacional sobre esse novo modelo;
-7. autosave, recovery e escrita crash-safe;
-8. recompor a fase do jogo de referência (`examples/reference-project`) usando cenas reutilizáveis, provando o gate do M2 na prática.
-
-Cada item deve ser entregue como uma fatia vertical pequena, mantendo o workspace sempre compilável e os formatos migráveis — o mesmo padrão usado para fechar o M1.
+Com M0–M2 fechados, o próximo ciclo inicia M3 (runtime extensível: Rust, Lua e plugins).
 
 ## Indicadores de progresso
 

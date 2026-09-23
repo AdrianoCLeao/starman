@@ -1,0 +1,52 @@
+(
+    version: 3,
+    name: "level",
+    entities: [
+        (
+            id: "dd53e8ca-f301-4bd0-8c16-c52ba7a41866",
+            name: Some("Main Camera"),
+            components: {
+                "Camera3d": {
+                    "aspect_ratio": 1.5214626789093018,
+                    "far": 1000.0,
+                    "fov_y_radians": 0.7853981852531433,
+                    "near": 0.10000000149011612,
+                },
+                "PrimaryCamera": {},
+                "Transform": {
+                    "rotation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0 },
+                    "scale": { "x": 1.0, "y": 1.0, "z": 1.0 },
+                    "translation": { "x": 0.0, "y": 2.72, "z": 10.0 },
+                },
+                "Visible": {},
+            },
+            children: [],
+        ),
+        (
+            id: "e9c3a4d5-f6b7-4890-1234-567890abcdef",
+            name: Some("ArenaInstance"),
+            components: {
+                "Transform": {
+                    "rotation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0 },
+                    "scale": { "x": 1.0, "y": 1.0, "z": 1.0 },
+                    "translation": { "x": 0.0, "y": 0.0, "z": 0.0 },
+                },
+            },
+            children: [],
+            instance: Some((
+                scene: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+                scene_path: Some("scenes/rooms/arena.scene.ron"),
+                overrides: [
+                    (
+                        target: "c7a1e2b3-d4f5-4678-9012-34567890abcd",
+                        component: "Transform",
+                        field_path: "translation",
+                        value: { "x": -3.0, "y": 0.0, "z": 1.0 },
+                    ),
+                ],
+                removed: [],
+                added: [],
+            )),
+        ),
+    ],
+)

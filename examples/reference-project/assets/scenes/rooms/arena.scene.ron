@@ -1,0 +1,68 @@
+(
+    version: 3,
+    name: "arena",
+    entities: [
+        (
+            id: "09c123ca-f419-4eca-a63f-ec40975945fd",
+            name: Some("Ground"),
+            components: {
+                "ColliderShape3D": {
+                    "$fields": {
+                        "half_extents": { "x": 12.0, "y": 0.1, "z": 12.0 },
+                    },
+                    "$variant": "Box",
+                },
+                "PhysicsMaterial": {
+                    "density": 1.0,
+                    "friction": 0.9,
+                    "restitution": 0.2,
+                },
+                "RigidBodyType": "Static",
+                "Transform": {
+                    "rotation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0 },
+                    "scale": { "x": 1.0, "y": 1.0, "z": 1.0 },
+                    "translation": { "x": 0.0, "y": -0.1, "z": 0.0 },
+                },
+            },
+            children: [],
+        ),
+        (
+            id: "c7a1e2b3-d4f5-4678-9012-34567890abcd",
+            name: Some("CrateInstance"),
+            components: {
+                "Transform": {
+                    "rotation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0 },
+                    "scale": { "x": 1.0, "y": 1.0, "z": 1.0 },
+                    "translation": { "x": -2.0, "y": 0.0, "z": 0.0 },
+                },
+            },
+            children: [],
+            instance: Some((
+                scene: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+                scene_path: Some("scenes/props/crate.scene.ron"),
+                overrides: [],
+                removed: [],
+                added: [],
+            )),
+        ),
+        (
+            id: "d8b2f3c4-e5a6-4789-0123-4567890abcde",
+            name: Some("LampInstance"),
+            components: {
+                "Transform": {
+                    "rotation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0 },
+                    "scale": { "x": 1.0, "y": 1.0, "z": 1.0 },
+                    "translation": { "x": 2.0, "y": 0.0, "z": 0.0 },
+                },
+            },
+            children: [],
+            instance: Some((
+                scene: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+                scene_path: Some("scenes/props/lamp.scene.ron"),
+                overrides: [],
+                removed: [],
+                added: [],
+            )),
+        ),
+    ],
+)

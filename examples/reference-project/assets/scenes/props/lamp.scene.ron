@@ -1,0 +1,25 @@
+(
+    version: 3,
+    name: "lamp",
+    entities: [
+        (
+            id: "b1c2d3e4-f5a6-4789-b012-3456789abcde",
+            name: Some("LampMesh"),
+            components: {
+                "MeshRenderer": {
+                    "material": "materials/default.ron",
+                    "mesh": "meshes/cube.glb",
+                    "texture": "textures/placeholder.png",
+                },
+                "RenderLayer3D": {},
+                "Transform": {
+                    "rotation": { "w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0 },
+                    "scale": { "x": 0.25, "y": 1.5, "z": 0.25 },
+                    "translation": { "x": 0.0, "y": 0.75, "z": 0.0 },
+                },
+                "Visible": {},
+            },
+            children: [],
+        ),
+    ],
+)
