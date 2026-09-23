@@ -153,6 +153,14 @@ impl ViewportRenderer {
         self.last_error.as_deref()
     }
 
+    pub fn module(&self) -> Option<&ViewportRenderModule> {
+        self.runtime.as_ref()
+    }
+
+    pub fn module_mut(&mut self) -> Option<&mut ViewportRenderModule> {
+        self.runtime.as_mut()
+    }
+
     pub fn ensure_size(&mut self, render_state: &egui_wgpu::RenderState, width: u32, height: u32) {
         let width = width.max(1);
         let height = height.max(1);

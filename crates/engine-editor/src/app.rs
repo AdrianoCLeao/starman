@@ -18,8 +18,6 @@ use engine_assets::{
     AssetDatabase, AssetServer, InheritedEntity, MaterialHandle, MeshData, MeshHandle,
     SceneDeserializer, SceneFile, SceneInstance, SceneSerializer, TextureHandle,
 };
-use engine_project::Project;
-use engine_scene::expand_all_instances;
 use engine_core::{
     create_world, register_core_reflection_types, Camera2d, Camera3d, Children, EditorEntityBundle,
     EngineError, EntityName, GlobalTransform, Parent, PrimaryCamera, RenderLayer2D, RenderLayer3D,
@@ -32,19 +30,18 @@ use engine_physics::{
     raycast, register_physics_reflection_types, ColliderEntityMap3D, ColliderShape3D,
     PhysicsWorld3D,
 };
+use engine_project::Project;
 use engine_reflect::{ComponentRegistry, ReflectMetadataRegistry, ReflectTypeRegistry};
-use engine_render::{MeshRenderable3d, RenderSceneAdapter, SpriteRenderable2d};
+use engine_render::{DebugView, MeshRenderable3d, RenderSceneAdapter, SpriteRenderable2d};
+use engine_scene::expand_all_instances;
 
 use crate::asset_browser::{AssetBrowserState, AssetKind};
 use crate::autosave::{self, AutosaveState};
-use crate::clipboard::{
-    capture_clipboard_entity, paste_clipboard_entity, EntityClipboard,
-};
+use crate::clipboard::{capture_clipboard_entity, paste_clipboard_entity, EntityClipboard};
 use crate::commands::{
     CommandHistory, DeleteEntityCommand, DuplicateEntityCommand, EditorCommand,
     RenameEntityCommand, ReparentEntityCommand, SetComponentCommand, SpawnEntityCommand,
 };
-use crate::prefab_context::{PrefabEditFrame, PrefabEditStack};
 use crate::config::{
     AssetBrowserViewModeConfig, EditorConfig, GizmoAxisLockConfig, GizmoModeConfig,
     GizmoOrientationConfig, GizmoSnapConfig, GizmoToolConfig, ViewportCameraConfig,
@@ -52,6 +49,7 @@ use crate::config::{
 };
 use crate::inspector::InspectorPanel;
 use crate::layout::{create_default_layout, Tab};
+use crate::prefab_context::{PrefabEditFrame, PrefabEditStack};
 use crate::selection::Selection;
 use crate::viewport::{EditorCamera, ViewportRenderer};
 
@@ -3054,7 +3052,8 @@ impl EditorApp {
         if entities.is_empty() {
             return;
         }
-        self.command_history.begin_transaction("Duplicate selection");
+        self.command_history
+            .begin_transaction("Duplicate selection");
         for entity in entities {
             self.cmd_duplicate_entity(entity);
         }
@@ -4028,7 +4027,7 @@ impl EditorApp {
         }
     }
 
-    fn draw_status_bar(&self, ctx: &egui::Context) {
+    fn draw_status_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("status_bar")
             .exact_height(22.0)
             .show(ctx, |ui| {
@@ -4042,6 +4041,42 @@ impl EditorApp {
                     ui.separator();
                     ui.label(format!("Play: {}", self.play_mode.status.label()));
                     ui.separator();
+                    if let Some(module) = self.viewport_renderer.module_mut() {
+                        let frame = module.frame_renderer_mut();
+                        ui.label(format!("Render: {}", frame.tier().as_str()));
+                        ui.separator();
+                        ui.label(format!("Lights: {}", frame.last_light_count()));
+                        ui.separator();
+                        let passes = frame
+                            .last_pass_order()
+                            .iter()
+                            .map(|p| p.0)
+                            .collect::<Vec<_>>()
+                            .join("→");
+                        if !passes.is_empty() {
+                            ui.label(format!("Graph: {passes}"));
+                            ui.separator();
+                        }
+                        let mut view = frame.debug_view();
+                        egui::ComboBox::from_id_salt("render-debug-view")
+                            .selected_text(view.as_str())
+                            .show_ui(ui, |ui| {
+                                for candidate in [
+                                    DebugView::None,
+                                    DebugView::Depth,
+                                    DebugView::Normals,
+                                    DebugView::Clusters,
+                                    DebugView::Overdraw,
+                                    DebugView::LightHeat,
+                                ] {
+                                    ui.selectable_value(&mut view, candidate, candidate.as_str());
+                                }
+                            });
+                        if view != frame.debug_view() {
+                            frame.set_debug_view(view);
+                        }
+                        ui.separator();
+                    }
 
                     if let Some(path) = &self.file_path {
                         let name = path
@@ -4838,17 +4873,17 @@ impl EditorApp {
         let Some(instance) = self.world.get::<SceneInstance>(entity).cloned() else {
             return;
         };
-        let relative = instance
-            .0
-            .scene_path
-            .clone()
-            .or_else(|| {
-                self.asset_server
-                    .database()
-                    .and_then(|db| db.resolve_relative_path(instance.0.scene).map(str::to_owned))
-            });
+        let relative = instance.0.scene_path.clone().or_else(|| {
+            self.asset_server.database().and_then(|db| {
+                db.resolve_relative_path(instance.0.scene)
+                    .map(str::to_owned)
+            })
+        });
         let Some(relative) = relative else {
-            self.log_message(LogLevel::Warn, "Cannot open prefab: nested scene path is unresolved");
+            self.log_message(
+                LogLevel::Warn,
+                "Cannot open prefab: nested scene path is unresolved",
+            );
             return;
         };
         let path = self.project.paths.assets_dir().join(&relative);
@@ -4894,7 +4929,10 @@ impl EditorApp {
         let _ = self.prefab_stack.truncate_to(index);
         if let Some(frame) = self.prefab_stack.current().cloned() {
             if let Err(error) = self.load_scene(&frame.scene_path) {
-                self.log_message(LogLevel::Error, format!("Failed to return to scene: {error}"));
+                self.log_message(
+                    LogLevel::Error,
+                    format!("Failed to return to scene: {error}"),
+                );
                 return;
             }
             self.file_path = Some(frame.scene_path);
