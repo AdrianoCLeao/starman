@@ -1,3 +1,5 @@
+#![allow(dead_code)] // Legacy world collectors kept for unit tests / migration.
+
 use bevy_ecs::{prelude::World, query::With};
 use engine_assets::{MaterialHandle, MeshHandle, TextureHandle};
 use engine_core::{GlobalTransform, RenderLayer2D, RenderLayer3D, Visible};

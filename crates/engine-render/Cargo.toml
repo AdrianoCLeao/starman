@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 bevy_ecs.workspace = true
+blake3.workspace = true
 bytemuck.workspace = true
 engine-assets = { path = "../engine-assets" }
 engine-core = { path = "../engine-core" }
@@ -14,6 +15,7 @@ engine-math = { path = "../engine-math" }
 log.workspace = true
 pollster = "0.3"
 ron.workspace = true
+serde.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 

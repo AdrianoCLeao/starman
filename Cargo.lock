@@ -1909,6 +1909,7 @@ name = "engine-render"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "blake3",
  "bytemuck",
  "engine-assets",
  "engine-core",
@@ -1917,6 +1918,7 @@ dependencies = [
  "log",
  "pollster 0.3.0",
  "ron",
+ "serde",
  "wgpu",
  "winit",
 ]

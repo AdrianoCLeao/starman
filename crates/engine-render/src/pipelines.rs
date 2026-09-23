@@ -1,14 +1,28 @@
 use std::mem::size_of;
+use std::path::PathBuf;
 
 use wgpu::util::DeviceExt;
+
+use crate::shader::ShaderLibrary;
+
+fn load_wgsl(relative: &str) -> String {
+    let mut lib = ShaderLibrary::new(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("shaders"),
+        PathBuf::from(".starman/shader-cache"),
+    );
+    lib.expand_source(relative).unwrap_or_else(|error| {
+        panic!("failed to load shader '{relative}': {error}");
+    })
+}
 
 pub(crate) fn create_pipeline_3d(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
 ) -> crate::Pipeline3d {
+    let source = load_wgsl("mesh3d.wgsl");
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine-render-mesh3d-shader"),
-        source: wgpu::ShaderSource::Wgsl(crate::MESH3D_SHADER.into()),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
     });
 
     let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -146,9 +160,10 @@ pub(crate) fn create_pipeline_2d(
     device: &wgpu::Device,
     surface_format: wgpu::TextureFormat,
 ) -> crate::Pipeline2d {
+    let source = load_wgsl("sprite2d.wgsl");
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some("engine-render-sprite2d-shader"),
-        source: wgpu::ShaderSource::Wgsl(crate::SPRITE2D_SHADER.into()),
+        source: wgpu::ShaderSource::Wgsl(source.into()),
     });
 
     let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
