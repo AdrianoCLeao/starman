@@ -50,8 +50,8 @@ impl CompositionGraph {
         })?;
         let scene = parse_scene_for_graph(path, &source)?;
 
-        let relative = relative_under_assets(database, path)
-            .unwrap_or_else(|| path.display().to_string());
+        let relative =
+            relative_under_assets(database, path).unwrap_or_else(|| path.display().to_string());
         let id = database
             .resolve_id(&relative)
             .unwrap_or_else(|| path_derived_id(&relative));
@@ -68,8 +68,7 @@ impl CompositionGraph {
             if !child_path.is_file() {
                 return Err(EngineError::AssetLoad {
                     path: child_rel,
-                    reason: "nested scene path referenced by an instance does not exist"
-                        .to_owned(),
+                    reason: "nested scene path referenced by an instance does not exist".to_owned(),
                 });
             }
             let child_id = database
@@ -147,11 +146,10 @@ fn collect_instance_paths(entities: &[SceneEntityData]) -> Vec<String> {
 }
 
 fn parse_scene_for_graph(path: &Path, source: &str) -> Result<SceneFile> {
-    let mut scene: SceneFile =
-        ron::from_str(source).map_err(|error| EngineError::AssetLoad {
-            path: path.display().to_string(),
-            reason: format!("failed to parse scene for composition graph: {error}"),
-        })?;
+    let mut scene: SceneFile = ron::from_str(source).map_err(|error| EngineError::AssetLoad {
+        path: path.display().to_string(),
+        reason: format!("failed to parse scene for composition graph: {error}"),
+    })?;
     scene.version = SceneFile::CURRENT_VERSION;
     Ok(scene)
 }

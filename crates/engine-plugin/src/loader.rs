@@ -8,8 +8,8 @@ use engine_core::{EngineError, Result};
 use libloading::Library;
 use starman_plugin_sdk::{
     AbiVersionFn, CapabilityFlags, NegotiateFn, OnLoadFn, OnUnloadFn, RestoreFn, SnapshotFn,
-    StarmanHostV1, StarmanPluginCtx, StarmanPluginInfo, StarmanStr, SYM_ABI_VERSION, SYM_NEGOTIATE,
-    SYM_ON_LOAD, SYM_ON_UNLOAD, SYM_RESTORE, SYM_SNAPSHOT, STARMAN_PLUGIN_ABI_VERSION,
+    StarmanHostV1, StarmanPluginCtx, StarmanPluginInfo, StarmanStr, STARMAN_PLUGIN_ABI_VERSION,
+    SYM_ABI_VERSION, SYM_NEGOTIATE, SYM_ON_LOAD, SYM_ON_UNLOAD, SYM_RESTORE, SYM_SNAPSHOT,
 };
 
 use crate::host::{HostBus, SharedHostBus};
@@ -139,9 +139,7 @@ impl PluginHost {
             });
         }
 
-        let plugin_name = unsafe { info.name.as_str() }
-            .unwrap_or(name)
-            .to_owned();
+        let plugin_name = unsafe { info.name.as_str() }.unwrap_or(name).to_owned();
         let plugin_version = unsafe { info.version.as_str() }
             .unwrap_or("0.0.0")
             .to_owned();
@@ -348,7 +346,10 @@ unsafe extern "C" fn host_spawn(host: *mut std::ffi::c_void) -> starman_plugin_s
     starman_plugin_sdk::EntityHandle(0)
 }
 
-unsafe extern "C" fn host_despawn(host: *mut std::ffi::c_void, _entity: starman_plugin_sdk::EntityHandle) -> bool {
+unsafe extern "C" fn host_despawn(
+    host: *mut std::ffi::c_void,
+    _entity: starman_plugin_sdk::EntityHandle,
+) -> bool {
     let _ = host;
     false
 }

@@ -102,7 +102,8 @@ pub struct StarmanHostV1 {
     pub abi_version: u32,
     pub log: Option<unsafe extern "C" fn(host: *mut c_void, level: u32, message: StarmanStr)>,
     pub spawn_entity: Option<unsafe extern "C" fn(host: *mut c_void) -> EntityHandle>,
-    pub despawn_entity: Option<unsafe extern "C" fn(host: *mut c_void, entity: EntityHandle) -> bool>,
+    pub despawn_entity:
+        Option<unsafe extern "C" fn(host: *mut c_void, entity: EntityHandle) -> bool>,
     pub set_component_field: Option<
         unsafe extern "C" fn(
             host: *mut c_void,

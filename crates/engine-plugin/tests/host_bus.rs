@@ -68,5 +68,8 @@ fn spawn_and_set_transform_field_roundtrip() {
     .unwrap();
     assert_eq!(bus.registrations.systems_by_owner[&PluginId(7)].len(), 1);
     bus.registrations.clear_owner(PluginId(7));
-    assert!(!bus.registrations.systems_by_owner.contains_key(&PluginId(7)));
+    assert!(!bus
+        .registrations
+        .systems_by_owner
+        .contains_key(&PluginId(7)));
 }

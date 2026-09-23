@@ -22,9 +22,9 @@ pub mod watch;
 
 pub use import::{AssetDatabase, AssetMeta, ImportSummary};
 pub use scene::{
-    InheritedEntity, InstanceLocalEntity, LocalAddedEntity, LocalParent, OverrideEntry,
-    SceneDeserializer, SceneEntityData, SceneExternalComponents, SceneFile, SceneInstance,
-    SceneInstanceData, SceneSerializer, SceneValue, write_scene_ron,
+    write_scene_ron, InheritedEntity, InstanceLocalEntity, LocalAddedEntity, LocalParent,
+    OverrideEntry, SceneDeserializer, SceneEntityData, SceneExternalComponents, SceneFile,
+    SceneInstance, SceneInstanceData, SceneSerializer, SceneValue,
 };
 pub use watch::{AssetChange, AssetWatcher, WatchConfig};
 

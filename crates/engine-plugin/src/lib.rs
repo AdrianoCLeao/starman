@@ -9,16 +9,12 @@ mod shadow_copy;
 pub use host::{
     HostBus, HostCommand, HostError, HostQuery, HostValue, ScheduleName, SharedHostBus,
 };
-pub use loader::{
-    find_plugin_library, LoadedPlugin, PluginHost, PluginId, PluginState,
-};
+pub use loader::{find_plugin_library, LoadedPlugin, PluginHost, PluginId, PluginState};
 pub use permissions::{PermissionGuard, ProjectPermissions};
 pub use registry::DynamicRegistration;
 pub use shadow_copy::shadow_copy_library;
 
-pub use starman_plugin_sdk::{
-    CapabilityFlags, EntityHandle, STARMAN_PLUGIN_ABI_VERSION,
-};
+pub use starman_plugin_sdk::{CapabilityFlags, EntityHandle, STARMAN_PLUGIN_ABI_VERSION};
 
 pub fn module_name() -> &'static str {
     "engine-plugin"

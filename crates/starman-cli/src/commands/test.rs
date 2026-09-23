@@ -50,7 +50,10 @@ pub fn run(path: PathBuf) -> Result<TestOutcome, CliError> {
     // Exercise Lua for a few frames when present (headless gate).
     let mut lua_frames = 0u32;
     for _ in 0..3 {
-        let _ = prepared.engine.modules.flush_input(&mut prepared.engine.world);
+        let _ = prepared
+            .engine
+            .modules
+            .flush_input(&mut prepared.engine.world);
         lua_frames += 1;
     }
 

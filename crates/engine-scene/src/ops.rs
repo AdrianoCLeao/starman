@@ -153,9 +153,7 @@ pub fn set_override(
     let component = component.into();
     let field_path = field_path.into();
     instance.overrides.retain(|entry| {
-        !(entry.target == target
-            && entry.component == component
-            && entry.field_path == field_path)
+        !(entry.target == target && entry.component == component && entry.field_path == field_path)
     });
     instance.overrides.push(OverrideEntry {
         target,
@@ -183,10 +181,7 @@ pub fn new_instance(scene: SourceAssetId, scene_path: Option<String>) -> SceneIn
     data
 }
 
-fn find_entity_mut(
-    entities: &mut [SceneEntityData],
-    id: EntityId,
-) -> Option<&mut SceneEntityData> {
+fn find_entity_mut(entities: &mut [SceneEntityData], id: EntityId) -> Option<&mut SceneEntityData> {
     for entity in entities.iter_mut() {
         if entity.id == id {
             return Some(entity);

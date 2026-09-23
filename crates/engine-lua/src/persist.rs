@@ -34,7 +34,8 @@ pub fn save_persist(path: &Path, data: &JsonValue) -> Result<()> {
             reason: error.to_string(),
         })?;
     }
-    let text = serde_json::to_string_pretty(data).map_err(|error| EngineError::Config(error.to_string()))?;
+    let text = serde_json::to_string_pretty(data)
+        .map_err(|error| EngineError::Config(error.to_string()))?;
     fs::write(path, text).map_err(|error| EngineError::AssetLoad {
         path: path.display().to_string(),
         reason: error.to_string(),
@@ -74,8 +75,7 @@ fn lua_value_to_json(lua: &Lua, value: Value) -> Result<JsonValue> {
 
 fn table_to_json(lua: &Lua, table: Table) -> Result<JsonValue> {
     // Prefer array if consecutive integer keys starting at 1.
-    let len = table
-        .raw_len();
+    let len = table.raw_len();
     let mut is_array = len > 0;
     if is_array {
         for i in 1..=len {

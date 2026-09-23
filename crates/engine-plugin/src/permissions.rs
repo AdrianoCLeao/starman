@@ -64,9 +64,10 @@ impl PermissionGuard {
             return false;
         }
         let relative = normalized.unwrap();
-        self.permissions.filesystem.iter().any(|grant| {
-            path_matches_grant(&relative, grant)
-        })
+        self.permissions
+            .filesystem
+            .iter()
+            .any(|grant| path_matches_grant(&relative, grant))
     }
 
     /// Resolves `path` under the project root and checks grants.

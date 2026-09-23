@@ -21,12 +21,10 @@ pub fn shadow_copy_library(
         });
     }
 
-    let file_name = source
-        .file_name()
-        .ok_or_else(|| EngineError::AssetLoad {
-            path: source.display().to_string(),
-            reason: "plugin path has no file name".to_owned(),
-        })?;
+    let file_name = source.file_name().ok_or_else(|| EngineError::AssetLoad {
+        path: source.display().to_string(),
+        reason: "plugin path has no file name".to_owned(),
+    })?;
 
     let dest_dir = cache_root.join(format!("{name}-{generation}"));
     fs::create_dir_all(&dest_dir).map_err(|error| EngineError::AssetLoad {

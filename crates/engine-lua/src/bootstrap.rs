@@ -23,10 +23,8 @@ pub struct ExtensibilityHost {
 
 impl ExtensibilityHost {
     pub fn bootstrap(project_root: &Path, manifest: &ProjectManifest) -> Result<Self> {
-        let permissions = PermissionGuard::new(
-            project_root,
-            manifest.permissions.to_plugin_permissions(),
-        );
+        let permissions =
+            PermissionGuard::new(project_root, manifest.permissions.to_plugin_permissions());
         let bus = Arc::new(Mutex::new(HostBus::new(permissions.clone())));
         let cache_root = project_root.join(".starman/plugin-cache");
         let mut plugins = PluginHost::new(Arc::clone(&bus), cache_root);
@@ -77,7 +75,8 @@ impl ExtensibilityHost {
 
         let lua = if manifest.scripts.has_scripts() {
             let roots = manifest.scripts.effective_roots();
-            let scripts_root = project_root.join(roots.first().map(|s| s.as_str()).unwrap_or("scripts/"));
+            let scripts_root =
+                project_root.join(roots.first().map(|s| s.as_str()).unwrap_or("scripts/"));
             let entry = manifest
                 .scripts
                 .entry
@@ -151,7 +150,12 @@ impl ExtensibilityHost {
         source: &Path,
         permissions: &PermissionsConfig,
     ) -> Result<PluginId> {
-        let existing = self.plugins.plugins().iter().find(|p| p.name == name).map(|p| p.id);
+        let existing = self
+            .plugins
+            .plugins()
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.id);
         let mask = CapabilityFlags::ALL;
         if let Some(id) = existing {
             self.plugins.reload(

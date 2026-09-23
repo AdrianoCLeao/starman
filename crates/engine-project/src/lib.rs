@@ -7,9 +7,7 @@ mod paths;
 mod project;
 mod validate;
 
-pub use manifest::{
-    PermissionsConfig, PluginRef, ProjectManifest, ProjectSettings, ScriptsConfig,
-};
+pub use manifest::{PermissionsConfig, PluginRef, ProjectManifest, ProjectSettings, ScriptsConfig};
 pub use paths::ProjectPaths;
 pub use project::{CreateOptions, Project};
 pub use validate::{Severity, ValidationIssue, ValidationReport};

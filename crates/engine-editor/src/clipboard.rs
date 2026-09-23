@@ -4,9 +4,9 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use engine_assets::{InstanceLocalEntity, SceneInstance};
 use engine_core::{Children, EntityId, EntityName, Parent, PersistentId};
+use engine_reflect::bevy_reflect::PartialReflect;
 use engine_reflect::ComponentRegistry;
 use engine_render::{MeshRenderable3d, SpriteRenderable2d};
-use engine_reflect::bevy_reflect::PartialReflect;
 
 pub struct ClipboardEntity {
     pub name: Option<String>,
@@ -45,7 +45,11 @@ pub fn capture_clipboard_entity(
 
     let mut components = Vec::new();
     for descriptor in component_registry.all() {
-        let short = descriptor.name.rsplit("::").next().unwrap_or(descriptor.name);
+        let short = descriptor
+            .name
+            .rsplit("::")
+            .next()
+            .unwrap_or(descriptor.name);
         if matches!(
             short,
             "EntityName"
@@ -132,17 +136,19 @@ pub fn paste_clipboard_entity(
             continue;
         }
         if let Some(target) = descriptor.get_reflect_mut(entity, world) {
-            let _ = target
-                .as_partial_reflect_mut()
-                .try_apply(value.as_ref());
+            let _ = target.as_partial_reflect_mut().try_apply(value.as_ref());
         }
     }
 
     let mut child_entities = Vec::new();
     for child in &entry.children {
-        if let Some(child_entity) =
-            paste_clipboard_entity(world, component_registry, child, Some(entity), as_instance_local)
-        {
+        if let Some(child_entity) = paste_clipboard_entity(
+            world,
+            component_registry,
+            child,
+            Some(entity),
+            as_instance_local,
+        ) {
             child_entities.push(child_entity);
         }
     }

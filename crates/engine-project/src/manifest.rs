@@ -136,7 +136,11 @@ impl ProjectManifest {
     }
 
     /// Resolve a plugin's on-disk library path relative to the project root.
-    pub fn resolve_plugin_dir(&self, project_root: &std::path::Path, plugin: &PluginRef) -> PathBuf {
+    pub fn resolve_plugin_dir(
+        &self,
+        project_root: &std::path::Path,
+        plugin: &PluginRef,
+    ) -> PathBuf {
         match &plugin.path {
             Some(path) => project_root.join(path),
             None => project_root.join("plugins").join(&plugin.name),

@@ -17,9 +17,7 @@ pub use ops::{
     set_override,
 };
 pub use path::InstancePath;
-pub use resolve::{
-    count_named, expand_all_instances, resync_instance, InstanceResolver,
-};
+pub use resolve::{count_named, expand_all_instances, resync_instance, InstanceResolver};
 
 // Re-export authored format pieces used by consumers of this crate.
 pub use engine_assets::{

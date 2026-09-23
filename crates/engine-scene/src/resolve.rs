@@ -237,13 +237,15 @@ impl<'a> InstanceResolver<'a> {
     ) -> Result<()> {
         let parent = match &added.parent {
             LocalParent::InstanceRoot => instance_root,
-            LocalParent::Template(template_id) => *template_map.get(template_id).ok_or_else(|| {
-                EngineError::AssetLoad {
-                    path: template_id.to_string(),
-                    reason: "local-added entity parents to a missing/removed template entity"
-                        .to_owned(),
-                }
-            })?,
+            LocalParent::Template(template_id) => {
+                *template_map
+                    .get(template_id)
+                    .ok_or_else(|| EngineError::AssetLoad {
+                        path: template_id.to_string(),
+                        reason: "local-added entity parents to a missing/removed template entity"
+                            .to_owned(),
+                    })?
+            }
         };
 
         let entity = {
@@ -440,11 +442,10 @@ fn load_template_scene(
         path: path.display().to_string(),
         reason: error.to_string(),
     })?;
-    let mut scene: SceneFile =
-        ron::from_str(&source).map_err(|error| EngineError::AssetLoad {
-            path: path.display().to_string(),
-            reason: format!("failed to parse nested scene: {error}"),
-        })?;
+    let mut scene: SceneFile = ron::from_str(&source).map_err(|error| EngineError::AssetLoad {
+        path: path.display().to_string(),
+        reason: format!("failed to parse nested scene: {error}"),
+    })?;
     scene.version = SceneFile::CURRENT_VERSION;
     Ok(scene)
 }
@@ -491,9 +492,10 @@ fn apply_field_override(value: &mut SceneValue, field_path: &str, new_value: &Sc
                 .iter()
                 .any(|(k, _)| matches!(k, SceneValue::String(s) if s == first));
             if exists {
-                if let Some((_, slot)) = map.iter_mut().find(|(k, _)| {
-                    matches!(k, SceneValue::String(s) if s == first)
-                }) {
+                if let Some((_, slot)) = map
+                    .iter_mut()
+                    .find(|(k, _)| matches!(k, SceneValue::String(s) if s == first))
+                {
                     *slot = new_value.clone();
                 }
             } else {
@@ -503,9 +505,10 @@ fn apply_field_override(value: &mut SceneValue, field_path: &str, new_value: &Sc
         return;
     }
     if let SceneValue::Map(map) = value {
-        if let Some((_, slot)) = map.iter_mut().find(|(k, _)| {
-            matches!(k, SceneValue::String(s) if s == first)
-        }) {
+        if let Some((_, slot)) = map
+            .iter_mut()
+            .find(|(k, _)| matches!(k, SceneValue::String(s) if s == first))
+        {
             apply_field_override(slot, &rest.join("."), new_value);
         }
     }

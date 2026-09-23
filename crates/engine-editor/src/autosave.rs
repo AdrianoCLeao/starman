@@ -97,9 +97,7 @@ pub fn pending_recovery(project: &Project) -> Option<(PathBuf, PathBuf)> {
         return None;
     }
     let autosave_mtime = fs::metadata(&autosave).ok()?.modified().ok()?;
-    let original_mtime = fs::metadata(&original)
-        .ok()
-        .and_then(|m| m.modified().ok());
+    let original_mtime = fs::metadata(&original).ok().and_then(|m| m.modified().ok());
     if original_mtime.is_some_and(|m| m >= autosave_mtime) {
         return None;
     }

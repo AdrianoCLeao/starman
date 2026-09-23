@@ -21,9 +21,7 @@ use crate::AssetServer;
 mod instance_data;
 mod migration;
 
-pub use instance_data::{
-    LocalAddedEntity, LocalParent, OverrideEntry, SceneInstanceData,
-};
+pub use instance_data::{LocalAddedEntity, LocalParent, OverrideEntry, SceneInstanceData};
 
 /// Live ECS marker for a nested-scene instance root. The authored payload is
 /// [`SceneInstanceData`]; expansion of inherited children is performed by
@@ -361,7 +359,8 @@ impl<'w, 'a> SceneSerializer<'w, 'a> {
                 continue;
             };
 
-            let serialized_value = match reflect_to_scene_value(reflect_value.as_partial_reflect()) {
+            let serialized_value = match reflect_to_scene_value(reflect_value.as_partial_reflect())
+            {
                 Ok(value) => value,
                 Err(error) => {
                     log::warn!(
@@ -473,8 +472,8 @@ fn collect_local_added(
         }) {
             continue;
         }
-        let entity_data =
-            serializer.serialize_local_entity(entity, &format!("{path}/local{}", entity.index()))?;
+        let entity_data = serializer
+            .serialize_local_entity(entity, &format!("{path}/local{}", entity.index()))?;
         if added.iter().any(|entry| entry.entity.id == entity_data.id) {
             continue;
         }

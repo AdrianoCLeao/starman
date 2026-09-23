@@ -14,7 +14,7 @@ use engine_core::{register_core_reflection_types, EntityId, EntityName, SourceAs
 use engine_reflect::{ComponentRegistry, ReflectMetadataRegistry, ReflectTypeRegistry};
 use engine_scene::{
     apply_overrides_to_source, expand_all_instances, promote_local_entity, revert_overrides,
-    set_override, StructuralDiff, CycleDetector,
+    set_override, CycleDetector, StructuralDiff,
 };
 use std::collections::HashMap as StdHashMap;
 
@@ -59,9 +59,18 @@ fn expands_nested_instance_and_applies_override() {
         SceneValue::String("translation".into()),
         SceneValue::Map({
             let mut m = ron::Map::new();
-            m.insert(SceneValue::String("x".into()), SceneValue::Number(0.0.into()));
-            m.insert(SceneValue::String("y".into()), SceneValue::Number(0.0.into()));
-            m.insert(SceneValue::String("z".into()), SceneValue::Number(0.0.into()));
+            m.insert(
+                SceneValue::String("x".into()),
+                SceneValue::Number(0.0.into()),
+            );
+            m.insert(
+                SceneValue::String("y".into()),
+                SceneValue::Number(0.0.into()),
+            );
+            m.insert(
+                SceneValue::String("z".into()),
+                SceneValue::Number(0.0.into()),
+            );
             m
         }),
     );
@@ -69,10 +78,22 @@ fn expands_nested_instance_and_applies_override() {
         SceneValue::String("rotation".into()),
         SceneValue::Map({
             let mut m = ron::Map::new();
-            m.insert(SceneValue::String("x".into()), SceneValue::Number(0.0.into()));
-            m.insert(SceneValue::String("y".into()), SceneValue::Number(0.0.into()));
-            m.insert(SceneValue::String("z".into()), SceneValue::Number(0.0.into()));
-            m.insert(SceneValue::String("w".into()), SceneValue::Number(1.0.into()));
+            m.insert(
+                SceneValue::String("x".into()),
+                SceneValue::Number(0.0.into()),
+            );
+            m.insert(
+                SceneValue::String("y".into()),
+                SceneValue::Number(0.0.into()),
+            );
+            m.insert(
+                SceneValue::String("z".into()),
+                SceneValue::Number(0.0.into()),
+            );
+            m.insert(
+                SceneValue::String("w".into()),
+                SceneValue::Number(1.0.into()),
+            );
             m
         }),
     );
@@ -80,9 +101,18 @@ fn expands_nested_instance_and_applies_override() {
         SceneValue::String("scale".into()),
         SceneValue::Map({
             let mut m = ron::Map::new();
-            m.insert(SceneValue::String("x".into()), SceneValue::Number(1.0.into()));
-            m.insert(SceneValue::String("y".into()), SceneValue::Number(1.0.into()));
-            m.insert(SceneValue::String("z".into()), SceneValue::Number(1.0.into()));
+            m.insert(
+                SceneValue::String("x".into()),
+                SceneValue::Number(1.0.into()),
+            );
+            m.insert(
+                SceneValue::String("y".into()),
+                SceneValue::Number(1.0.into()),
+            );
+            m.insert(
+                SceneValue::String("z".into()),
+                SceneValue::Number(1.0.into()),
+            );
             m
         }),
     );
@@ -114,9 +144,18 @@ fn expands_nested_instance_and_applies_override() {
         "translation",
         SceneValue::Map({
             let mut m = ron::Map::new();
-            m.insert(SceneValue::String("x".into()), SceneValue::Number(5.0.into()));
-            m.insert(SceneValue::String("y".into()), SceneValue::Number(0.0.into()));
-            m.insert(SceneValue::String("z".into()), SceneValue::Number(0.0.into()));
+            m.insert(
+                SceneValue::String("x".into()),
+                SceneValue::Number(5.0.into()),
+            );
+            m.insert(
+                SceneValue::String("y".into()),
+                SceneValue::Number(0.0.into()),
+            );
+            m.insert(
+                SceneValue::String("z".into()),
+                SceneValue::Number(0.0.into()),
+            );
             m
         }),
     );
@@ -243,7 +282,12 @@ fn apply_revert_promote_round_trip() {
         "",
         SceneValue::Unit,
     );
-    revert_overrides(&mut instance, Some(template_entity), Some("Visible"), Some(""));
+    revert_overrides(
+        &mut instance,
+        Some(template_entity),
+        Some("Visible"),
+        Some(""),
+    );
     assert!(instance.overrides.is_empty());
 
     instance.added.push(engine_assets::LocalAddedEntity {

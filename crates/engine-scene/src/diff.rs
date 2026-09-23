@@ -49,10 +49,7 @@ impl StructuralDiff {
                 .iter()
                 .find(|(id, _)| id == removed)
                 .and_then(|(_, name)| name.clone());
-            changes.push(DiffChange::Removed {
-                id: *removed,
-                name,
-            });
+            changes.push(DiffChange::Removed { id: *removed, name });
         }
 
         for added in &instance.added {
@@ -184,11 +181,7 @@ fn find_component(
     id: EntityId,
     component: &str,
 ) -> Option<SceneValue> {
-    fn walk(
-        entities: &[SceneEntityData],
-        id: EntityId,
-        component: &str,
-    ) -> Option<SceneValue> {
+    fn walk(entities: &[SceneEntityData], id: EntityId, component: &str) -> Option<SceneValue> {
         for entity in entities {
             if entity.id == id {
                 return entity.components.get(component).cloned();
@@ -208,12 +201,10 @@ fn field_at(value: &SceneValue, field_path: &str) -> Option<SceneValue> {
         let SceneValue::Map(map) = current else {
             return None;
         };
-        current = map
-            .iter()
-            .find_map(|(k, v)| match k {
-                SceneValue::String(s) if s == part => Some(v.clone()),
-                _ => None,
-            })?;
+        current = map.iter().find_map(|(k, v)| match k {
+            SceneValue::String(s) if s == part => Some(v.clone()),
+            _ => None,
+        })?;
     }
     Some(current)
 }

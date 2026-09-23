@@ -55,14 +55,7 @@ fn loads_example_gameplay_when_built() {
     assert_eq!(snap.len(), 4);
 
     let id2 = host
-        .reload(
-            id,
-            &lib,
-            CapabilityFlags::ALL,
-            true,
-            false,
-            false,
-        )
+        .reload(id, &lib, CapabilityFlags::ALL, true, false, false)
         .expect("reload");
     assert!(host.restore(id2, &snap).unwrap());
     host.unload(id2).unwrap();

@@ -58,9 +58,8 @@ pub struct LuaRuntime {
 
 impl LuaRuntime {
     pub fn new(bus: SharedHostBus, config: LuaRuntimeConfig) -> Result<Self> {
-        let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default()).map_err(|error| {
-            EngineError::Config(format!("failed to create Lua state: {error}"))
-        })?;
+        let lua = Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())
+            .map_err(|error| EngineError::Config(format!("failed to create Lua state: {error}")))?;
 
         // Sandbox: remove dangerous libs already excluded by ALL_SAFE;
         // also restrict package.path to scripts root.
@@ -137,8 +136,7 @@ impl LuaRuntime {
             .map_err(|error| EngineError::Config(error.to_string()))?;
 
         // Placeholders filled by with_world via registry.
-        self.lua
-            .set_app_data(WorldPtrs::default());
+        self.lua.set_app_data(WorldPtrs::default());
         install_world_fns(&self.lua, &starman, Arc::clone(&self.bus))?;
 
         let persist = self
@@ -237,7 +235,8 @@ impl LuaRuntime {
             });
         }
 
-        let persist = persist::capture_persist(&self.lua).unwrap_or(JsonValue::Object(Default::default()));
+        let persist =
+            persist::capture_persist(&self.lua).unwrap_or(JsonValue::Object(Default::default()));
         let source = std::fs::read_to_string(&entry).map_err(|error| EngineError::AssetLoad {
             path: entry.display().to_string(),
             reason: error.to_string(),
@@ -248,7 +247,11 @@ impl LuaRuntime {
         // mutate it. An empty first-load table is a no-op restore.
         let _ = persist::restore_persist(&self.lua, &persist);
 
-        let load_result = self.lua.load(&source).set_name(entry.to_string_lossy()).exec();
+        let load_result = self
+            .lua
+            .load(&source)
+            .set_name(entry.to_string_lossy())
+            .exec();
         match load_result {
             Ok(()) => {
                 self.loaded = true;
@@ -382,7 +385,9 @@ fn install_world_fns(lua: &Lua, starman: &Table, bus: SharedHostBus) -> Result<(
                 .ok_or_else(|| mlua::Error::external("world not bound"))?;
             let world = unsafe { ptrs.world_mut() }.map_err(mlua::Error::external)?;
             let components = unsafe { ptrs.components() }.map_err(mlua::Error::external)?;
-            let mut bus = bus_spawn.lock().map_err(|e| mlua::Error::external(e.to_string()))?;
+            let mut bus = bus_spawn
+                .lock()
+                .map_err(|e| mlua::Error::external(e.to_string()))?;
             let value = bus
                 .execute(world, components, HostCommand::Spawn { name })
                 .map_err(|e| mlua::Error::external(e.to_string()))?;
@@ -428,9 +433,11 @@ fn install_world_fns(lua: &Lua, starman: &Table, bus: SharedHostBus) -> Result<(
                     .ok_or_else(|| mlua::Error::external("world not bound"))?;
                 let world = unsafe { ptrs.world_mut() }.map_err(mlua::Error::external)?;
                 let components = unsafe { ptrs.components() }.map_err(mlua::Error::external)?;
-                let value: JsonValue =
-                    serde_json::from_str(&json).map_err(|e| mlua::Error::external(e.to_string()))?;
-                let mut bus = bus_set.lock().map_err(|e| mlua::Error::external(e.to_string()))?;
+                let value: JsonValue = serde_json::from_str(&json)
+                    .map_err(|e| mlua::Error::external(e.to_string()))?;
+                let mut bus = bus_set
+                    .lock()
+                    .map_err(|e| mlua::Error::external(e.to_string()))?;
                 bus.execute(
                     world,
                     components,
@@ -460,7 +467,9 @@ fn install_world_fns(lua: &Lua, starman: &Table, bus: SharedHostBus) -> Result<(
                 let world = unsafe { ptrs.world_mut() }.map_err(mlua::Error::external)?;
                 let components = unsafe { ptrs.components() }.map_err(mlua::Error::external)?;
                 let types = unsafe { ptrs.types() }.map_err(mlua::Error::external)?;
-                let mut bus = bus_get.lock().map_err(|e| mlua::Error::external(e.to_string()))?;
+                let mut bus = bus_get
+                    .lock()
+                    .map_err(|e| mlua::Error::external(e.to_string()))?;
                 let value = bus
                     .query(
                         world,
@@ -487,11 +496,12 @@ fn install_world_fns(lua: &Lua, starman: &Table, bus: SharedHostBus) -> Result<(
             let Some(schedule) = ScheduleName::parse(&schedule) else {
                 return Err(mlua::Error::external("unknown schedule"));
             };
-            let mut bus = bus_reg.lock().map_err(|e| mlua::Error::external(e.to_string()))?;
+            let mut bus = bus_reg
+                .lock()
+                .map_err(|e| mlua::Error::external(e.to_string()))?;
             bus.registrations
                 .record_system(LUA_OWNER, schedule.as_str(), &name);
-            bus.system_callbacks
-                .push((LUA_OWNER, schedule, name, 0));
+            bus.system_callbacks.push((LUA_OWNER, schedule, name, 0));
             Ok(())
         })
         .map_err(|error| EngineError::Config(error.to_string()))?;

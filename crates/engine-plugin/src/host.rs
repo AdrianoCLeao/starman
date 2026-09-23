@@ -190,10 +190,7 @@ impl HostBus {
                 }
                 Ok(JsonValue::Bool(true))
             }
-            HostCommand::InsertComponent {
-                entity,
-                component,
-            } => {
+            HostCommand::InsertComponent { entity, component } => {
                 let entity = self.handles.resolve(entity)?;
                 let descriptor = find_component(component_registry, &component)
                     .ok_or(HostError::UnknownComponent(component))?;
@@ -205,10 +202,7 @@ impl HostBus {
                 }
                 Ok(JsonValue::Bool(true))
             }
-            HostCommand::RemoveComponent {
-                entity,
-                component,
-            } => {
+            HostCommand::RemoveComponent { entity, component } => {
                 let entity = self.handles.resolve(entity)?;
                 let descriptor = find_component(component_registry, &component)
                     .ok_or(HostError::UnknownComponent(component))?;
@@ -222,7 +216,14 @@ impl HostBus {
                 value,
             } => {
                 let entity = self.handles.resolve(entity)?;
-                set_field_json(world, component_registry, entity, &component, &field_path, &value)?;
+                set_field_json(
+                    world,
+                    component_registry,
+                    entity,
+                    &component,
+                    &field_path,
+                    &value,
+                )?;
                 Ok(JsonValue::Bool(true))
             }
             HostCommand::Log { level, message } => {
@@ -339,9 +340,10 @@ fn find_component<'a>(
     registry: &'a ComponentRegistry,
     name: &str,
 ) -> Option<&'a engine_reflect::ComponentDescriptor> {
-    registry.all().iter().find(|d| {
-        d.name == name || short_name(d.name) == name
-    })
+    registry
+        .all()
+        .iter()
+        .find(|d| d.name == name || short_name(d.name) == name)
 }
 
 fn short_name(type_path: &str) -> &str {
@@ -405,16 +407,15 @@ fn walk_field<'a>(
     let mut current = value;
     for part in path.split('.').filter(|p| !p.is_empty()) {
         current = match current.reflect_ref() {
-            ReflectRef::Struct(data) => data.field(part).ok_or_else(|| {
-                HostError::Message(format!("missing field '{part}'"))
-            })?,
+            ReflectRef::Struct(data) => data
+                .field(part)
+                .ok_or_else(|| HostError::Message(format!("missing field '{part}'")))?,
             ReflectRef::TupleStruct(data) => {
-                let index: usize = part.parse().map_err(|_| {
-                    HostError::Message(format!("invalid tuple index '{part}'"))
-                })?;
-                data.field(index).ok_or_else(|| {
-                    HostError::Message(format!("missing tuple field {index}"))
-                })?
+                let index: usize = part
+                    .parse()
+                    .map_err(|_| HostError::Message(format!("invalid tuple index '{part}'")))?;
+                data.field(index)
+                    .ok_or_else(|| HostError::Message(format!("missing tuple field {index}")))?
             }
             _ => {
                 return Err(HostError::Message(format!(
@@ -455,13 +456,13 @@ fn apply_json_to_reflect(
                     current = data.field_at(idx).unwrap();
                 }
                 engine_reflect::bevy_reflect::ReflectRef::TupleStruct(data) => {
-                    let idx: usize = part.parse().map_err(|_| {
-                        HostError::Message(format!("invalid tuple index '{part}'"))
-                    })?;
+                    let idx: usize = part
+                        .parse()
+                        .map_err(|_| HostError::Message(format!("invalid tuple index '{part}'")))?;
                     indices.push(FieldNav::Tuple(idx));
-                    current = data.field(idx).ok_or_else(|| {
-                        HostError::Message(format!("missing tuple field {idx}"))
-                    })?;
+                    current = data
+                        .field(idx)
+                        .ok_or_else(|| HostError::Message(format!("missing tuple field {idx}")))?;
                 }
                 _ => {
                     return Err(HostError::Message(format!(
@@ -477,16 +478,12 @@ fn apply_json_to_reflect(
     let mut target = root;
     for nav in indices {
         target = match (target.reflect_mut(), nav) {
-            (ReflectMut::Struct(data), FieldNav::Struct(idx)) => {
-                data.field_at_mut(idx).ok_or_else(|| {
-                    HostError::Message("struct field vanished".to_owned())
-                })?
-            }
-            (ReflectMut::TupleStruct(data), FieldNav::Tuple(idx)) => {
-                data.field_mut(idx).ok_or_else(|| {
-                    HostError::Message("tuple field vanished".to_owned())
-                })?
-            }
+            (ReflectMut::Struct(data), FieldNav::Struct(idx)) => data
+                .field_at_mut(idx)
+                .ok_or_else(|| HostError::Message("struct field vanished".to_owned()))?,
+            (ReflectMut::TupleStruct(data), FieldNav::Tuple(idx)) => data
+                .field_mut(idx)
+                .ok_or_else(|| HostError::Message("tuple field vanished".to_owned()))?,
             _ => {
                 return Err(HostError::Message("navigation mismatch".to_owned()));
             }
@@ -495,18 +492,18 @@ fn apply_json_to_reflect(
 
     match target.reflect_mut() {
         ReflectMut::Struct(data) => {
-            let field = data.field_mut(leaf_name).ok_or_else(|| {
-                HostError::Message(format!("missing field '{leaf_name}'"))
-            })?;
+            let field = data
+                .field_mut(leaf_name)
+                .ok_or_else(|| HostError::Message(format!("missing field '{leaf_name}'")))?;
             apply_json_leaf(field, value)
         }
         ReflectMut::TupleStruct(data) => {
-            let idx: usize = leaf_name.parse().map_err(|_| {
-                HostError::Message(format!("invalid tuple index '{leaf_name}'"))
-            })?;
-            let field = data.field_mut(idx).ok_or_else(|| {
-                HostError::Message(format!("missing tuple field {idx}"))
-            })?;
+            let idx: usize = leaf_name
+                .parse()
+                .map_err(|_| HostError::Message(format!("invalid tuple index '{leaf_name}'")))?;
+            let field = data
+                .field_mut(idx)
+                .ok_or_else(|| HostError::Message(format!("missing tuple field {idx}")))?;
             apply_json_leaf(field, value)
         }
         _ => apply_json_leaf(target, value),
@@ -523,27 +520,39 @@ fn apply_json_leaf(
     value: &HostValue,
 ) -> HostResult<()> {
     if let Some(slot) = target.try_downcast_mut::<f32>() {
-        *slot = value.as_f64().ok_or_else(|| HostError::Message("expected number".into()))? as f32;
+        *slot = value
+            .as_f64()
+            .ok_or_else(|| HostError::Message("expected number".into()))? as f32;
         return Ok(());
     }
     if let Some(slot) = target.try_downcast_mut::<f64>() {
-        *slot = value.as_f64().ok_or_else(|| HostError::Message("expected number".into()))?;
+        *slot = value
+            .as_f64()
+            .ok_or_else(|| HostError::Message("expected number".into()))?;
         return Ok(());
     }
     if let Some(slot) = target.try_downcast_mut::<i32>() {
-        *slot = value.as_i64().ok_or_else(|| HostError::Message("expected integer".into()))? as i32;
+        *slot = value
+            .as_i64()
+            .ok_or_else(|| HostError::Message("expected integer".into()))? as i32;
         return Ok(());
     }
     if let Some(slot) = target.try_downcast_mut::<i64>() {
-        *slot = value.as_i64().ok_or_else(|| HostError::Message("expected integer".into()))?;
+        *slot = value
+            .as_i64()
+            .ok_or_else(|| HostError::Message("expected integer".into()))?;
         return Ok(());
     }
     if let Some(slot) = target.try_downcast_mut::<u32>() {
-        *slot = value.as_u64().ok_or_else(|| HostError::Message("expected u32".into()))? as u32;
+        *slot = value
+            .as_u64()
+            .ok_or_else(|| HostError::Message("expected u32".into()))? as u32;
         return Ok(());
     }
     if let Some(slot) = target.try_downcast_mut::<bool>() {
-        *slot = value.as_bool().ok_or_else(|| HostError::Message("expected bool".into()))?;
+        *slot = value
+            .as_bool()
+            .ok_or_else(|| HostError::Message("expected bool".into()))?;
         return Ok(());
     }
     if let Some(slot) = target.try_downcast_mut::<String>() {
@@ -602,8 +611,12 @@ fn reflect_to_json(
         ReflectRef::Struct(data) => {
             let mut map = serde_json::Map::new();
             for i in 0..data.field_len() {
-                let Some(name) = data.name_at(i) else { continue };
-                let Some(field) = data.field_at(i) else { continue };
+                let Some(name) = data.name_at(i) else {
+                    continue;
+                };
+                let Some(field) = data.field_at(i) else {
+                    continue;
+                };
                 map.insert(name.to_owned(), reflect_to_json(field)?);
             }
             Ok(JsonValue::Object(map))
