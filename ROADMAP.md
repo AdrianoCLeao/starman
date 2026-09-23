@@ -35,18 +35,18 @@ Uma capacidade só está pronta quando:
 
 ## Estado atual
 
-Com o M3 fechado, a base contém tudo do M2 mais:
+Com o M4 fechado, a base contém tudo do M3 mais:
 
-- ABI C v1 (`starman-plugin-sdk`) com negotiate/lifecycle, capability flags e panic fence;
-- host larga de comandos/queries (`engine-plugin`) compartilhada por plugins e Lua;
-- shadow-copy de bibliotecas, ownership de registros dinâmicos por `PluginId`;
-- runtime Lua 5.4 in-process com hot reload de `STARMAN_PERSIST`, coroutines e debugger básico;
-- permissões deny-by-default no manifesto; play in-process no editor (standalone preview permanece);
-- reference-project com `scripts/main.lua` e `example_gameplay` cdylib.
+- `FrameRenderer` único com `extract → prepare → queue → render graph` (ADR 0009);
+- `RenderWorld` desacoplado do gameplay world no encode;
+- GPU arena geracional, staging belt e deferred destroy;
+- shader library WGSL com `#include`, variantes e cache em disco;
+- capability tiers (Tier 0/1); Forward+ clustered lights (sem shadows);
+- frustum culling + batch keys 3D; picking/debug views; stress scene ~2k meshes / ~64 lights.
 
 Limitações conscientes que ainda valem:
 
-- render graph / PBR ainda são M4/M5;
+- PBR completo, shadows, IBL e post FX são M5;
 - project manager completo é M7; builds distribuíveis são M8;
 
 
@@ -56,7 +56,6 @@ Limitações conscientes que ainda valem:
 
 Os maiores gaps estruturais que restam são:
 
-- o renderer precisa ser separado em extração, preparação, fila e execução antes de crescer (M4);
 - a garantia de referência tipada por ID só vale para cenas já salvas depois da migração — o formato legado por caminho continua lido, mas não é reescrito sozinho por uma leitura (ver "migração ao salvar" em `docs/asset-pipeline.md`);
 - não há ainda uma vertical slice distribuível que prove o workflow completo.
 
@@ -149,7 +148,9 @@ Entregas:
 
 **Gate:** alterar gameplay Lua recarrega durante play; recompilar um plugin Rust recarrega com estado suportado ou apresenta um diagnóstico seguro e reversível.
 
-### M4 — Renderer escalável
+### M4 — Renderer escalável ✅
+
+**Status:** fechado (ADR 0009, `docs/rendering.md`).
 
 **Objetivo:** criar a arquitetura que sustentará as features gráficas seguintes.
 
@@ -165,7 +166,7 @@ Entregas:
 - picking por GPU e overlays próprios do editor;
 - captura de frame e debug views para buffers, normals, clusters, shadows e overdraw.
 
-**Gate:** o renderer suporta cenas grandes de teste sem acoplamento ao editor e sem erros de validação nos três sistemas.
+**Gate:** o renderer suporta cenas grandes de teste sem acoplamento ao editor e sem erros de validação nos três sistemas. Stress ~2k meshes / ~64 lights + Tier 1 no `engine-smoke` CI.
 
 ### M5 — PBR e apresentação visual
 
@@ -301,7 +302,7 @@ Esses itens podem entrar depois, por evidência de produto, sem contaminar as fu
 
 ## Próximo ciclo recomendado
 
-Com M0–M3 fechados, o próximo ciclo inicia M4 (renderer escalável / render graph).
+Com M0–M4 fechados, o próximo ciclo inicia M5 (PBR e apresentação visual).
 
 ## Indicadores de progresso
 

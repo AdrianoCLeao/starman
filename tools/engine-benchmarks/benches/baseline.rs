@@ -319,6 +319,46 @@ criterion_group!(
     bench_asset_lookup,
     bench_import_incremental,
     bench_scene_load_with_database,
-    bench_host_set_get_field
+    bench_host_set_get_field,
+    bench_frustum_and_clusters
 );
 criterion_main!(baseline);
+
+fn bench_frustum_and_clusters(c: &mut Criterion) {
+    use engine_math::{Mat4, Vec3};
+    use engine_render::{cull_lights_cpu, Aabb, CapabilityTier, Frustum, GpuLight};
+
+    c.bench_function("frustum_aabb_2000", |b| {
+        let frustum = Frustum::from_view_proj(Mat4::perspective_rh(1.0, 1.6, 0.1, 500.0));
+        let aabbs: Vec<Aabb> = (0..2000)
+            .map(|i| {
+                let x = (i % 50) as f32 * 2.0;
+                let z = (i / 50) as f32 * 2.0;
+                Aabb::from_center_extents(Vec3::new(x, 0.0, z), Vec3::splat(0.5))
+            })
+            .collect();
+        b.iter(|| {
+            aabbs
+                .iter()
+                .filter(|a| frustum.intersects_aabb(**a))
+                .count()
+        });
+    });
+
+    c.bench_function("cluster_cull_64_lights", |b| {
+        let lights: Vec<GpuLight> = (0..64)
+            .map(|i| GpuLight {
+                position_range: [i as f32, 1.0, i as f32, 8.0],
+                color_intensity: [1.0, 1.0, 1.0, 1.0],
+                direction_cone: [0.0, -1.0, 0.0, 0.0],
+                light_type: if i == 0 {
+                    GpuLight::TYPE_DIRECTIONAL
+                } else {
+                    GpuLight::TYPE_POINT
+                },
+                _pad: [0; 3],
+            })
+            .collect();
+        b.iter(|| cull_lights_cpu(&lights, [0.0; 3], CapabilityTier::Tier1).cluster_count());
+    });
+}

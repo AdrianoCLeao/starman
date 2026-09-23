@@ -103,6 +103,28 @@ jobs:
           mkdir -p target/smoke
           cargo run -p engine-smoke -- --backend "${{ matrix.backend }}" ${{ matrix.smoke_flags }} --report "target/smoke/${{ matrix.name }}.json"
 
+      - name: Assert smoke Tier 1 (non-fallback)
+        if: matrix.smoke_flags == ''
+        shell: bash
+        env:
+          SMOKE_REPORT: target/smoke/${{ matrix.name }}.json
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          path = os.environ["SMOKE_REPORT"]
+          with open(path) as f:
+              report = json.load(f)
+          tier = next((c for c in report["checks"] if c["name"] == "capability-tier"), None)
+          stress = next((c for c in report["checks"] if c["name"] == "stress-frames"), None)
+          if not report.get("success"):
+              sys.exit(f"smoke failed: {path}")
+          if tier is None or "tier1" not in tier.get("detail", ""):
+              sys.exit(f"expected Tier 1 in {path}, got {tier}")
+          if stress is None or not stress.get("success"):
+              sys.exit(f"expected stress-frames success in {path}")
+          print("tier1 + stress ok:", tier["detail"], stress["detail"])
+          PY
+
       - name: Exercise the CLI against the reference project
         shell: bash
         # `import` writes/updates `.meta.ron` sidecars next to each source

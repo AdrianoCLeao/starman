@@ -161,22 +161,47 @@ async fn run_smoke(
         .checks
         .push(check("adapter", true, adapter_info.name));
 
-    let (device, queue) = adapter
-        .request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("engine-smoke-device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-                memory_hints: wgpu::MemoryHints::Performance,
-            },
-            None,
-        )
-        .await
-        .map_err(|error| SmokeError::Gpu(format!("request_device failed: {error}")))?;
-    report.checks.push(check("device", true, "device created"));
+    let tier = engine_render::negotiate_tier(&adapter);
+    if !fallback_adapter && tier != engine_render::CapabilityTier::Tier1 {
+        return Err(SmokeError::Gpu(format!(
+            "CI expects Tier 1 on native backends; got {}",
+            tier.as_str()
+        )));
+    }
+    report.checks.push(check(
+        "capability-tier",
+        true,
+        format!("{} (fallback={fallback_adapter})", tier.as_str()),
+    ));
 
-    device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let mut frame = engine_render::create_frame_renderer_from_adapter(
+        &adapter,
+        format,
+        256,
+        256,
+        engine_render::FrameRendererConfig::default(),
+    )
+    .map_err(|error| SmokeError::Gpu(format!("FrameRenderer create failed: {error}")))?;
+    report.checks.push(check(
+        "device",
+        true,
+        format!(
+            "FrameRenderer {} on {}",
+            frame.tier().as_str(),
+            frame.caps.adapter_name
+        ),
+    ));
+
+    if !fallback_adapter && frame.tier() != engine_render::CapabilityTier::Tier1 {
+        return Err(SmokeError::Gpu(format!(
+            "FrameRenderer negotiated {}; CI requires tier1",
+            frame.tier().as_str()
+        )));
+    }
+
+    frame.device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let texture = frame.device.create_texture(&wgpu::TextureDescriptor {
         label: Some("engine-smoke-offscreen"),
         size: wgpu::Extent3d {
             width: 64,
@@ -186,14 +211,16 @@ async fn run_smoke(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+        format,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-        label: Some("engine-smoke-encoder"),
-    });
+    let mut encoder = frame
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("engine-smoke-encoder"),
+        });
     {
         let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("engine-smoke-clear-pass"),
@@ -215,16 +242,16 @@ async fn run_smoke(
             occlusion_query_set: None,
         });
     }
-    queue.submit(Some(encoder.finish()));
+    frame.queue.submit(Some(encoder.finish()));
 
-    match device.pop_error_scope().await {
+    match frame.device.pop_error_scope().await {
         Some(error) => return Err(SmokeError::Gpu(format!("validation error: {error}"))),
         None => report
             .checks
             .push(check("offscreen-render", true, "64x64 clear pass")),
     }
 
-    validate_readback(&device, &queue, &texture, report).await?;
+    validate_readback(&frame.device, &frame.queue, &texture, report).await?;
 
     let mut world = engine_core::create_world();
     world.insert_resource(engine_input::InputState::default());
@@ -238,12 +265,18 @@ async fn run_smoke(
         .push(check("physics", true, "physics world constructed"));
 
     let mut assets = engine_assets::AssetServer::new("examples/reference-project/assets");
-    let _ = assets
+    let texture_handle = assets
         .load_texture_handle("textures/placeholder.png")
         .map_err(|error| SmokeError::Integration(format!("texture load failed: {error}")))?;
+    let mesh_handle = assets
+        .load_mesh_handle("meshes/cube.glb")
+        .map_err(|error| SmokeError::Integration(format!("mesh load failed: {error}")))?;
+    let material_handle = assets
+        .load_material_handle("materials/default.ron")
+        .map_err(|error| SmokeError::Integration(format!("material load failed: {error}")))?;
     report
         .checks
-        .push(check("assets", true, "placeholder texture loaded"));
+        .push(check("assets", true, "mesh/texture/material loaded"));
 
     let mut render_module = engine_render::RenderModule::new();
     render_module
@@ -253,6 +286,67 @@ async fn run_smoke(
         "render-module",
         true,
         "headless tick skipped cleanly",
+    ));
+
+    // M4 stress gate: ~2k meshes + ~64 lights, 30 stable frames via FrameRenderer.
+    engine_render::spawn_stress_scene(
+        &mut world,
+        mesh_handle,
+        texture_handle,
+        material_handle,
+        engine_render::StressSceneConfig::default(),
+    );
+    let stress_target = frame.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("engine-smoke-stress"),
+        size: wgpu::Extent3d {
+            width: 256,
+            height: 256,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let stress_view = stress_target.create_view(&wgpu::TextureViewDescriptor::default());
+    const STRESS_FRAMES: u32 = 30;
+    for frame_i in 0..STRESS_FRAMES {
+        frame
+            .render_to_view(&mut world, &assets, &stress_view)
+            .map_err(|error| {
+                SmokeError::Integration(format!("stress frame {frame_i} failed: {error}"))
+            })?;
+    }
+    frame.device.poll(wgpu::Maintain::Wait);
+    report.checks.push(check(
+        "stress-frames",
+        true,
+        format!(
+            "{STRESS_FRAMES} frames, lights={}, passes={}",
+            frame.last_light_count(),
+            frame.last_pass_order().len()
+        ),
+    ));
+
+    frame.request_pick(128, 128);
+    frame
+        .render_to_view(&mut world, &assets, &stress_view)
+        .map_err(|error| SmokeError::Integration(format!("pick frame failed: {error}")))?;
+    let _ = frame.poll_pick();
+    report
+        .checks
+        .push(check("picking", true, "request_pick/poll_pick exercised"));
+
+    let dump_path = std::env::temp_dir().join("starman-smoke-debug.ppm");
+    frame
+        .dump_debug_ppm(&dump_path)
+        .map_err(|error| SmokeError::Integration(format!("debug dump failed: {error}")))?;
+    report.checks.push(check(
+        "debug-dump",
+        true,
+        format!("wrote {}", dump_path.display()),
     ));
 
     Ok(())
