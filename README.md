@@ -17,6 +17,7 @@ Core workspace members:
 - engine-audio
 - engine-input
 - engine-assets
+- engine-scene
 - engine-reflect
 - engine-reflect-derive
 - engine-editor

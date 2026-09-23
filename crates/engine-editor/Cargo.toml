@@ -15,6 +15,7 @@ engine-math = { path = "../engine-math" }
 engine-physics = { path = "../engine-physics" }
 engine-render = { path = "../engine-render" }
 engine-reflect = { path = "../engine-reflect" }
+engine-scene = { path = "../engine-scene" }
 
 egui.workspace = true
 eframe.workspace = true

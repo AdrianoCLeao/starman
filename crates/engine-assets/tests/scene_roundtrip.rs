@@ -136,6 +136,7 @@ fn scene_deserializer_skips_unknown_components() {
             name: Some("OnlyEntity".to_owned()),
             components: HashMap::new(),
             children: Vec::new(),
+            instance: None,
         }],
     };
 

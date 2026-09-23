@@ -3,8 +3,11 @@ use std::fs;
 use std::path::Path;
 
 use bevy_ecs::entity::Entity;
+use bevy_ecs::prelude::Component;
 use bevy_ecs::world::World;
-use engine_core::{Children, EngineError, EntityId, EntityName, Parent, PersistentId, Result};
+use engine_core::{
+    Children, EngineError, EntityId, EntityName, Parent, PersistentId, Result, SourceAssetId,
+};
 use engine_reflect::bevy_reflect::{
     DynamicEnum, DynamicStruct, DynamicTuple, PartialReflect, ReflectMut, ReflectRef, VariantType,
 };
@@ -15,7 +18,34 @@ use serde::{Deserialize, Serialize};
 
 use crate::AssetServer;
 
+mod instance_data;
 mod migration;
+
+pub use instance_data::{
+    LocalAddedEntity, LocalParent, OverrideEntry, SceneInstanceData,
+};
+
+/// Live ECS marker for a nested-scene instance root. The authored payload is
+/// [`SceneInstanceData`]; expansion of inherited children is performed by
+/// `engine-scene`'s resolver after deserialize.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub struct SceneInstance(pub SceneInstanceData);
+
+/// Marks an entity that was spawned from a template inside a
+/// [`SceneInstance`]. These entities are never written back into the parent
+/// scene document — only their overrides / local adds are.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InheritedEntity {
+    pub template_id: EntityId,
+    pub instance_root: Entity,
+}
+
+/// Marks an entity that was added locally on an instance (not part of the
+/// source scene asset). Serialized under `SceneInstanceData::added`.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InstanceLocalEntity {
+    pub instance_root: Entity,
+}
 
 pub type SceneValue = ron::Value;
 pub type SceneEntityData = EntityData;
@@ -28,10 +58,10 @@ pub struct SceneFile {
 }
 
 impl SceneFile {
-    /// Scene format version 2: entities carry a stable [`EntityId`] (ADR
-    /// 0002). Version 1 files are migrated automatically on load, with a
+    /// Scene format version 3: nested scene instances with overrides
+    /// (ADR 0007). Versions 1 and 2 migrate automatically on load, with a
     /// backup preserved next to the original file (ADR 0006).
-    pub const CURRENT_VERSION: u32 = 2;
+    pub const CURRENT_VERSION: u32 = 3;
 
     /// Builds an empty, valid, current-version scene (no entities). Useful
     /// for scaffolding a project's entry scene on creation.
@@ -48,6 +78,28 @@ impl SceneFile {
     pub fn write_to(&self, path: &Path) -> Result<()> {
         write_scene_ron(path, self)
     }
+
+    /// Collects every nested scene [`SourceAssetId`] referenced by instance
+    /// roots in this document (non-recursive into those assets).
+    pub fn direct_scene_dependencies(&self) -> Vec<SourceAssetId> {
+        let mut ids = Vec::new();
+        collect_scene_deps(&self.entities, &mut ids);
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+}
+
+fn collect_scene_deps(entities: &[EntityData], out: &mut Vec<SourceAssetId>) {
+    for entity in entities {
+        if let Some(instance) = &entity.instance {
+            out.push(instance.scene);
+            for added in &instance.added {
+                collect_scene_deps(std::slice::from_ref(&added.entity), out);
+            }
+        }
+        collect_scene_deps(&entity.children, out);
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -56,6 +108,9 @@ pub struct EntityData {
     pub name: Option<String>,
     pub components: HashMap<String, SceneValue>,
     pub children: Vec<EntityData>,
+    /// When set, this entity is an instance root of another scene asset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instance: Option<SceneInstanceData>,
 }
 
 #[derive(Serialize)]
@@ -71,6 +126,8 @@ struct StableEntityData {
     name: Option<String>,
     components: BTreeMap<String, SceneValue>,
     children: Vec<StableEntityData>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance: Option<SceneInstanceData>,
 }
 
 pub trait SceneExternalComponents {
@@ -150,6 +207,16 @@ impl<'w, 'a> SceneSerializer<'w, 'a> {
             if entity_ref.get::<Parent>().is_some() {
                 continue;
             }
+            // Inherited entities are owned by a SceneInstance expansion —
+            // never materialize them as native roots.
+            if entity_ref.get::<InheritedEntity>().is_some() {
+                continue;
+            }
+            if entity_ref.get::<InstanceLocalEntity>().is_some() {
+                // Locals are serialized via the owning SceneInstance.added
+                // list, not as independent roots.
+                continue;
+            }
 
             root_entities.push(self.serialize_entity(entity, &index.to_string())?);
         }
@@ -168,6 +235,15 @@ impl<'w, 'a> SceneSerializer<'w, 'a> {
     }
 
     fn serialize_entity(&self, entity: Entity, path: &str) -> Result<EntityData> {
+        // Never walk into inherited children — they belong to the template.
+        if self.world.get::<InheritedEntity>(entity).is_some() {
+            return Err(EngineError::AssetLoad {
+                path: path.to_owned(),
+                reason: "internal error: attempted to serialize an inherited entity as native"
+                    .to_owned(),
+            });
+        }
+
         let mut components = HashMap::new();
 
         for descriptor in self.component_registry.all() {
@@ -217,6 +293,16 @@ impl<'w, 'a> SceneSerializer<'w, 'a> {
             .get::<EntityName>(entity)
             .map(|value| value.0.clone());
 
+        let instance = match self.world.get::<SceneInstance>(entity) {
+            Some(value) => {
+                let mut data = value.0.clone();
+                data.added = collect_local_added(self, entity, path)?;
+                data.normalize();
+                Some(data)
+            }
+            None => None,
+        };
+
         let children = self
             .world
             .get::<Children>(entity)
@@ -226,7 +312,17 @@ impl<'w, 'a> SceneSerializer<'w, 'a> {
                     .iter()
                     .copied()
                     .enumerate()
-                    .map(|(index, child)| self.serialize_entity(child, &format!("{path}/{index}")))
+                    .filter_map(|(index, child)| {
+                        // Skip inherited and instance-local children; locals
+                        // are captured into SceneInstance.added above.
+                        if self.world.get::<InheritedEntity>(child).is_some() {
+                            return None;
+                        }
+                        if self.world.get::<InstanceLocalEntity>(child).is_some() {
+                            return None;
+                        }
+                        Some(self.serialize_entity(child, &format!("{path}/{index}")))
+                    })
                     .collect::<Result<Vec<_>>>()
             })
             .transpose()?
@@ -243,15 +339,162 @@ impl<'w, 'a> SceneSerializer<'w, 'a> {
             name,
             components,
             children,
+            instance,
+        })
+    }
+
+    /// Serializes a local-added entity and its local-only descendants.
+    fn serialize_local_entity(&self, entity: Entity, path: &str) -> Result<EntityData> {
+        let mut components = HashMap::new();
+
+        for descriptor in self.component_registry.all() {
+            if !descriptor.has(entity, self.world) {
+                continue;
+            }
+
+            let component_name = descriptor_scene_name(descriptor);
+            if should_skip_default_component(component_name) {
+                continue;
+            }
+
+            let Some(reflect_value) = descriptor.get_reflect(entity, self.world) else {
+                continue;
+            };
+
+            let serialized_value = match reflect_to_scene_value(reflect_value.as_partial_reflect()) {
+                Ok(value) => value,
+                Err(error) => {
+                    log::warn!(
+                        target: "engine::assets",
+                        "Skipping component '{}' on local entity {:?}: {}",
+                        component_name,
+                        entity,
+                        error
+                    );
+                    continue;
+                }
+            };
+            components.insert(component_name.to_owned(), serialized_value);
+        }
+
+        if let (Some(external_components), Some(asset_server)) =
+            (self.external_components, self.asset_server)
+        {
+            external_components.serialize_entity_components(
+                self.world,
+                entity,
+                asset_server,
+                &mut components,
+            )?;
+        }
+
+        let name = self
+            .world
+            .get::<EntityName>(entity)
+            .map(|value| value.0.clone());
+
+        let children = self
+            .world
+            .get::<Children>(entity)
+            .map(|children| {
+                children
+                    .0
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .filter(|(_, child)| self.world.get::<InstanceLocalEntity>(*child).is_some())
+                    .map(|(index, child)| {
+                        self.serialize_local_entity(child, &format!("{path}/{index}"))
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
+
+        let id = self
+            .world
+            .get::<PersistentId>(entity)
+            .map(|persistent_id| persistent_id.0)
+            .unwrap_or_else(|| EntityId::deterministic_fallback(path));
+
+        Ok(EntityData {
+            id,
+            name,
+            components,
+            children,
+            instance: None,
         })
     }
 }
 
+fn collect_local_added(
+    serializer: &SceneSerializer<'_, '_>,
+    instance_root: Entity,
+    path: &str,
+) -> Result<Vec<LocalAddedEntity>> {
+    let world = serializer.world;
+    let mut added = Vec::new();
+
+    if let Some(children) = world.get::<Children>(instance_root) {
+        for (index, child) in children.0.iter().copied().enumerate() {
+            if world.get::<InstanceLocalEntity>(child).is_none() {
+                continue;
+            }
+            let entity_data =
+                serializer.serialize_local_entity(child, &format!("{path}/local{index}"))?;
+            added.push(LocalAddedEntity {
+                parent: LocalParent::InstanceRoot,
+                entity: entity_data,
+            });
+        }
+    }
+
+    for entity_ref in world.iter_entities() {
+        let entity = entity_ref.id();
+        let Some(local) = entity_ref.get::<InstanceLocalEntity>() else {
+            continue;
+        };
+        if local.instance_root != instance_root {
+            continue;
+        }
+        let Some(parent) = entity_ref.get::<Parent>() else {
+            continue;
+        };
+        if parent.0 == instance_root {
+            continue;
+        }
+        let Some(inherited) = world.get::<InheritedEntity>(parent.0) else {
+            continue;
+        };
+        if added.iter().any(|entry| {
+            world
+                .get::<PersistentId>(entity)
+                .is_some_and(|id| id.0 == entry.entity.id)
+        }) {
+            continue;
+        }
+        let entity_data =
+            serializer.serialize_local_entity(entity, &format!("{path}/local{}", entity.index()))?;
+        if added.iter().any(|entry| entry.entity.id == entity_data.id) {
+            continue;
+        }
+        added.push(LocalAddedEntity {
+            parent: LocalParent::Template(inherited.template_id),
+            entity: entity_data,
+        });
+    }
+
+    Ok(added)
+}
+
 /// Renders a scene as the canonical, deterministically-ordered RON
-/// representation and writes it to `path`. Shared by [`SceneSerializer`] and
-/// scene migration so both produce byte-identical output for the same data.
-fn write_scene_ron(path: &Path, scene: &SceneFile) -> Result<()> {
-    let stable_scene = to_stable_scene_file(scene);
+/// representation and writes it to `path` via an atomic temp+rename.
+/// Shared by [`SceneSerializer`] and scene migration so both produce
+/// byte-identical output for the same data.
+pub fn write_scene_ron(path: &Path, scene: &SceneFile) -> Result<()> {
+    let mut normalized = scene.clone();
+    normalize_scene_instances(&mut normalized);
+    let stable_scene = to_stable_scene_file(&normalized);
     let pretty = ron::ser::PrettyConfig::default();
     let serialized = ron::ser::to_string_pretty(&stable_scene, pretty).map_err(|error| {
         EngineError::AssetLoad {
@@ -260,10 +503,29 @@ fn write_scene_ron(path: &Path, scene: &SceneFile) -> Result<()> {
         }
     })?;
 
-    fs::write(path, serialized).map_err(|error| EngineError::AssetLoad {
-        path: path.display().to_string(),
-        reason: error.to_string(),
+    crate::import::write_atomic(path, serialized.as_bytes()).map_err(|error| {
+        EngineError::AssetLoad {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        }
     })
+}
+
+fn normalize_scene_instances(scene: &mut SceneFile) {
+    fn walk(entities: &mut [EntityData]) {
+        for entity in entities {
+            if let Some(instance) = &mut entity.instance {
+                instance.normalize();
+            }
+            walk(&mut entity.children);
+            if let Some(instance) = &mut entity.instance {
+                for added in &mut instance.added {
+                    walk(std::slice::from_mut(&mut added.entity));
+                }
+            }
+        }
+    }
+    walk(&mut scene.entities);
 }
 
 pub struct SceneDeserializer<'w, 'a> {
@@ -321,15 +583,23 @@ impl<'w, 'a> SceneDeserializer<'w, 'a> {
                     path: path.display().to_string(),
                     reason: format!("failed to parse legacy (v1) scene file: {error}"),
                 })?;
-            migration::migrate_and_persist(path, &source, legacy)?
+            migration::migrate_v1_and_persist(path, &source, legacy)?
+        } else if probe.version == migration::LEGACY_VERSION_V2 {
+            let legacy: migration::LegacySceneFileV2 =
+                ron::from_str(&source).map_err(|error| EngineError::AssetLoad {
+                    path: path.display().to_string(),
+                    reason: format!("failed to parse legacy (v2) scene file: {error}"),
+                })?;
+            migration::migrate_v2_and_persist(path, &source, legacy)?
         } else {
             return Err(EngineError::AssetLoad {
                 path: path.display().to_string(),
                 reason: format!(
-                    "unsupported scene version {}; expected {} (or {} for automatic migration)",
+                    "unsupported scene version {}; expected {} (or {} / {} for automatic migration)",
                     probe.version,
                     SceneFile::CURRENT_VERSION,
-                    migration::LEGACY_VERSION_V1
+                    migration::LEGACY_VERSION_V1,
+                    migration::LEGACY_VERSION_V2
                 ),
             });
         };
@@ -386,6 +656,12 @@ impl<'w, 'a> SceneDeserializer<'w, 'a> {
             }
 
             self.apply_registered_component(entity, component_name, component_value)?;
+        }
+
+        if let Some(instance) = &data.instance {
+            if let Ok(mut entity_ref) = self.world.get_entity_mut(entity) {
+                entity_ref.insert(SceneInstance(instance.clone()));
+            }
         }
 
         if let Some(parent_entity) = parent {
@@ -974,6 +1250,12 @@ fn to_stable_scene_file(scene: &SceneFile) -> StableSceneFile {
 }
 
 fn to_stable_entity_data(entity: &EntityData) -> StableEntityData {
+    let instance = entity.instance.as_ref().map(|data| {
+        let mut normalized = data.clone();
+        normalized.normalize();
+        normalized
+    });
+
     StableEntityData {
         id: entity.id,
         name: entity.name.clone(),
@@ -983,6 +1265,7 @@ fn to_stable_entity_data(entity: &EntityData) -> StableEntityData {
             .map(|(name, value)| (name.clone(), value.clone()))
             .collect(),
         children: entity.children.iter().map(to_stable_entity_data).collect(),
+        instance,
     }
 }
 
@@ -992,6 +1275,6 @@ mod tests {
 
     #[test]
     fn scene_version_constant_is_stable() {
-        assert_eq!(SceneFile::CURRENT_VERSION, 2);
+        assert_eq!(SceneFile::CURRENT_VERSION, 3);
     }
 }

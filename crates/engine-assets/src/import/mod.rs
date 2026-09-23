@@ -10,6 +10,7 @@ mod hash;
 mod meta;
 
 pub(crate) use atomic::is_temp_file;
+pub use atomic::write_atomic;
 pub(crate) use cache::ImportedCache;
 pub(crate) use database::ImportOutcome;
 pub use database::{AssetDatabase, ImportSummary};

@@ -28,7 +28,7 @@ pub(crate) fn is_temp_file(path: &Path) -> bool {
 
 /// Writes `bytes` to a sibling temporary file and renames it over `path`.
 /// On failure the temporary file is removed and `path` is left untouched.
-pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let temp_path = temp_path_for(path);
 
     if let Err(error) = fs::write(&temp_path, bytes) {

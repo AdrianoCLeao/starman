@@ -1,18 +1,21 @@
 [package]
-name = "engine-runner"
+name = "engine-scene"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+description = "Live nested scene composition, overrides, and structural diff (M2)"
 
 [dependencies]
 bevy_ecs.workspace = true
 engine-assets = { path = "../engine-assets" }
-engine-audio = { path = "../engine-audio" }
 engine-core = { path = "../engine-core" }
-engine-input = { path = "../engine-input" }
-engine-physics = { path = "../engine-physics" }
 engine-reflect = { path = "../engine-reflect" }
-engine-render = { path = "../engine-render" }
-engine-scene = { path = "../engine-scene" }
 log.workspace = true
+ron.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+engine-physics = { path = "../engine-physics" }

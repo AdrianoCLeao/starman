@@ -1783,6 +1783,7 @@ dependencies = [
  "engine-project",
  "engine-reflect",
  "engine-render",
+ "engine-scene",
  "gltf",
  "image",
  "log",
@@ -1884,7 +1885,24 @@ dependencies = [
  "engine-physics",
  "engine-reflect",
  "engine-render",
+ "engine-scene",
  "log",
+]
+
+[[package]]
+name = "engine-scene"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "engine-assets",
+ "engine-core",
+ "engine-physics",
+ "engine-reflect",
+ "log",
+ "ron",
+ "serde",
+ "thiserror 1.0.69",
+ "uuid",
 ]
 
 [[package]]
@@ -4879,6 +4897,7 @@ dependencies = [
  "engine-reflect",
  "engine-render",
  "engine-runner",
+ "engine-scene",
  "env_logger",
  "image",
  "log",

@@ -11,6 +11,7 @@ members = [
     "crates/engine-audio",
     "crates/engine-input",
     "crates/engine-assets",
+    "crates/engine-scene",
     "crates/engine-project",
     "crates/engine-runner",
     "crates/starman-cli",

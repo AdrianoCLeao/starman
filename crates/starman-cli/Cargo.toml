@@ -19,6 +19,7 @@ engine-assets = { path = "../engine-assets" }
 engine-core = { path = "../engine-core" }
 engine-project = { path = "../engine-project" }
 engine-runner = { path = "../engine-runner" }
+engine-scene = { path = "../engine-scene" }
 env_logger.workspace = true
 log.workspace = true
 
