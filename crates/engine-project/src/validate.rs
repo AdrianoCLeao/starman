@@ -39,11 +39,11 @@ pub struct ValidationReport {
 }
 
 impl ValidationReport {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self { issues: Vec::new() }
     }
 
-    pub(crate) fn push_error(&mut self, message: impl Into<String>) {
+    pub fn push_error(&mut self, message: impl Into<String>) {
         self.issues.push(ValidationIssue {
             severity: Severity::Error,
             message: message.into(),

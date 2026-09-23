@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use engine_project::{Project, ValidationReport};
+use engine_scene::CompositionGraph;
 
 use crate::error::CliError;
 
@@ -12,11 +13,29 @@ pub fn run(path: PathBuf) -> Result<ValidationReport, CliError> {
         source,
     })?;
 
-    if report.is_valid() {
-        Ok(report)
-    } else {
-        Err(CliError::Validation { path, report })
+    if !report.is_valid() {
+        return Err(CliError::Validation { path, report });
     }
+
+    // Nested-scene cycle / broken-ref check on the entry scene (M2).
+    let project = Project::open(&path).map_err(|source| CliError::Engine {
+        path: path.clone(),
+        source,
+    })?;
+    let entry = project
+        .paths
+        .resolve_asset_relative(&project.manifest.entry_scene);
+    if let Ok(database) =
+        engine_assets::AssetDatabase::open(project.paths.assets_dir(), project.paths.imported_dir())
+    {
+        if let Err(error) = CompositionGraph::build_from_file(&entry, &database) {
+            let mut report = ValidationReport::new();
+            report.push_error(error.to_string());
+            return Err(CliError::Validation { path, report });
+        }
+    }
+
+    Ok(report)
 }
 
 #[cfg(test)]

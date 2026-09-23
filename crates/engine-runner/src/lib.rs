@@ -32,6 +32,7 @@ use engine_reflect::{
     with_reflection_registries, ComponentRegistry, ReflectMetadataRegistry, ReflectTypeRegistry,
 };
 use engine_render::{RenderModule, RenderSceneAdapter};
+use engine_scene::expand_all_instances;
 
 /// The window error message [`run_scene_windowed`] treats as a clean exit
 /// (a `Stop` control command was received), rather than a failure.
@@ -285,6 +286,19 @@ pub fn load_scene_into_world(
                 SceneDeserializer::new(world, component_registry, type_registry, asset_server)
                     .with_external_components(&render_scene_adapter);
             let roots = deserializer.load_file(scene_path)?;
+            let expanded = expand_all_instances(
+                world,
+                component_registry,
+                type_registry,
+                asset_server,
+                Some(&render_scene_adapter as &dyn engine_assets::SceneExternalComponents),
+            )?;
+            if expanded > 0 {
+                log::info!(
+                    target: "engine::runner",
+                    "Expanded {expanded} nested scene instance(s)"
+                );
+            }
             Ok(roots.len())
         },
     )
