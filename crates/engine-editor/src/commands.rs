@@ -2,7 +2,8 @@ use std::collections::{HashSet, VecDeque};
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_core::{Children, EditorEntityBundle, EntityName, Parent};
+use engine_assets::SceneInstance;
+use engine_core::{Children, EditorEntityBundle, EntityId, EntityName, Parent, PersistentId};
 use engine_reflect::bevy_reflect::{PartialReflect, ReflectMut};
 use engine_reflect::{ComponentDescriptor, ComponentRegistry};
 use engine_render::{MeshRenderable3d, SpriteRenderable2d};
@@ -20,6 +21,10 @@ pub struct CommandHistory {
     undo_stack: VecDeque<Box<dyn EditorCommand>>,
     redo_stack: VecDeque<Box<dyn EditorCommand>>,
     max_size: usize,
+    /// Commands gathered between [`Self::begin_transaction`] and
+    /// [`Self::end_transaction`].
+    open_transaction: Option<Vec<Box<dyn EditorCommand>>>,
+    transaction_name: String,
 }
 
 impl CommandHistory {
@@ -28,6 +33,45 @@ impl CommandHistory {
             undo_stack: VecDeque::new(),
             redo_stack: VecDeque::new(),
             max_size,
+            open_transaction: None,
+            transaction_name: "Transaction".to_owned(),
+        }
+    }
+
+    pub fn begin_transaction(&mut self, name: impl Into<String>) {
+        if self.open_transaction.is_some() {
+            // Nested begin collapses into the outer transaction.
+            return;
+        }
+        self.transaction_name = name.into();
+        self.open_transaction = Some(Vec::new());
+    }
+
+    pub fn end_transaction(&mut self) {
+        let Some(commands) = self.open_transaction.take() else {
+            return;
+        };
+        if commands.is_empty() {
+            return;
+        }
+        let composite = CompositeCommand {
+            commands,
+            desc: self.transaction_name.clone(),
+        };
+        self.undo_stack
+            .push_back(Box::new(composite) as Box<dyn EditorCommand>);
+        self.redo_stack.clear();
+        while self.undo_stack.len() > self.max_size {
+            let _ = self.undo_stack.pop_front();
+        }
+    }
+
+    pub fn cancel_transaction(&mut self, world: &mut World) {
+        let Some(mut commands) = self.open_transaction.take() else {
+            return;
+        };
+        for cmd in commands.iter_mut().rev() {
+            cmd.undo(world);
         }
     }
 
@@ -38,6 +82,12 @@ impl CommandHistory {
     ) -> Option<Entity> {
         cmd.execute(world);
         let selection_hint = cmd.selection_hint();
+
+        if let Some(transaction) = &mut self.open_transaction {
+            transaction.push(cmd);
+            return selection_hint;
+        }
+
         self.undo_stack.push_back(cmd);
         self.redo_stack.clear();
 
@@ -49,6 +99,11 @@ impl CommandHistory {
     }
 
     pub fn undo(&mut self, world: &mut World) -> Option<Entity> {
+        if self.open_transaction.is_some() {
+            self.cancel_transaction(world);
+            return None;
+        }
+
         if let Some(mut cmd) = self.undo_stack.pop_back() {
             cmd.undo(world);
             let selection_hint = cmd.selection_hint();
@@ -71,7 +126,7 @@ impl CommandHistory {
     }
 
     pub fn can_undo(&self) -> bool {
-        !self.undo_stack.is_empty()
+        !self.undo_stack.is_empty() || self.open_transaction.is_some()
     }
 
     pub fn can_redo(&self) -> bool {
@@ -81,6 +136,38 @@ impl CommandHistory {
     pub fn clear(&mut self) {
         self.undo_stack.clear();
         self.redo_stack.clear();
+        self.open_transaction = None;
+    }
+}
+
+/// Groups multiple commands into a single undo/redo step.
+pub struct CompositeCommand {
+    pub commands: Vec<Box<dyn EditorCommand>>,
+    pub desc: String,
+}
+
+impl EditorCommand for CompositeCommand {
+    fn execute(&mut self, world: &mut World) {
+        for cmd in &mut self.commands {
+            cmd.execute(world);
+        }
+    }
+
+    fn undo(&mut self, world: &mut World) {
+        for cmd in self.commands.iter_mut().rev() {
+            cmd.undo(world);
+        }
+    }
+
+    fn description(&self) -> &str {
+        &self.desc
+    }
+
+    fn selection_hint(&self) -> Option<Entity> {
+        self.commands
+            .iter()
+            .rev()
+            .find_map(|cmd| cmd.selection_hint())
     }
 }
 
@@ -257,6 +344,7 @@ struct EntitySnapshot {
     components: Vec<ComponentSnapshot>,
     mesh_renderable: Option<MeshRenderable3d>,
     sprite_renderable: Option<SpriteRenderable2d>,
+    scene_instance: Option<SceneInstance>,
     children: Vec<EntitySnapshot>,
 }
 
@@ -796,6 +884,7 @@ fn capture_entity_snapshot(
         components,
         mesh_renderable: world.get::<MeshRenderable3d>(entity).copied(),
         sprite_renderable: world.get::<SpriteRenderable2d>(entity).copied(),
+        scene_instance: world.get::<SceneInstance>(entity).cloned(),
         children,
     })
 }
@@ -806,8 +895,10 @@ fn restore_entity_snapshot(
     snapshot: &EntitySnapshot,
 ) -> Option<Entity> {
     let entity = world.spawn_empty().id();
+    let new_id = EntityId::new_v4();
 
     if let Ok(mut entity_ref) = world.get_entity_mut(entity) {
+        entity_ref.insert(PersistentId(new_id));
         if let Some(name) = &snapshot.name {
             entity_ref.insert(EntityName::new(name.clone()));
         }
@@ -816,6 +907,11 @@ fn restore_entity_snapshot(
         }
         if let Some(sprite_renderable) = snapshot.sprite_renderable {
             entity_ref.insert(sprite_renderable);
+        }
+        if let Some(scene_instance) = snapshot.scene_instance.clone() {
+            // Deep-copy instance payload; nested inherited children are
+            // re-expanded by the caller after duplicate when needed.
+            entity_ref.insert(scene_instance);
         }
     }
 
@@ -842,12 +938,10 @@ fn restore_entity_snapshot(
         else {
             continue;
         };
-
+        restored_children.push(child_entity);
         if let Ok(mut child_ref) = world.get_entity_mut(child_entity) {
             child_ref.insert(Parent(entity));
         }
-
-        restored_children.push(child_entity);
     }
 
     if !restored_children.is_empty() {

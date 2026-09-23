@@ -1,9 +1,12 @@
 pub mod app;
 mod asset_browser;
+mod autosave;
+mod clipboard;
 pub mod commands;
 pub mod config;
 pub mod inspector;
 pub mod layout;
+mod prefab_context;
 pub mod selection;
 pub mod viewport;
 

@@ -15,9 +15,11 @@ use bevy_ecs::world::World;
 use eframe::egui;
 use egui_dock::{DockArea, DockState, TabViewer};
 use engine_assets::{
-    AssetDatabase, AssetServer, MaterialHandle, MeshData, MeshHandle, SceneDeserializer, SceneFile,
-    SceneSerializer, TextureHandle,
+    AssetDatabase, AssetServer, InheritedEntity, MaterialHandle, MeshData, MeshHandle,
+    SceneDeserializer, SceneFile, SceneInstance, SceneSerializer, TextureHandle,
 };
+use engine_project::Project;
+use engine_scene::expand_all_instances;
 use engine_core::{
     create_world, register_core_reflection_types, Camera2d, Camera3d, Children, EditorEntityBundle,
     EngineError, EntityName, GlobalTransform, Parent, PrimaryCamera, RenderLayer2D, RenderLayer3D,
@@ -34,10 +36,15 @@ use engine_reflect::{ComponentRegistry, ReflectMetadataRegistry, ReflectTypeRegi
 use engine_render::{MeshRenderable3d, RenderSceneAdapter, SpriteRenderable2d};
 
 use crate::asset_browser::{AssetBrowserState, AssetKind};
+use crate::autosave::{self, AutosaveState};
+use crate::clipboard::{
+    capture_clipboard_entity, paste_clipboard_entity, EntityClipboard,
+};
 use crate::commands::{
     CommandHistory, DeleteEntityCommand, DuplicateEntityCommand, EditorCommand,
     RenameEntityCommand, ReparentEntityCommand, SetComponentCommand, SpawnEntityCommand,
 };
+use crate::prefab_context::{PrefabEditFrame, PrefabEditStack};
 use crate::config::{
     AssetBrowserViewModeConfig, EditorConfig, GizmoAxisLockConfig, GizmoModeConfig,
     GizmoOrientationConfig, GizmoSnapConfig, GizmoToolConfig, ViewportCameraConfig,
@@ -849,6 +856,11 @@ pub struct EditorApp {
     play_mode: PlayModeState,
     started_at: Instant,
     console: ConsolePanel,
+    project: Project,
+    clipboard: EntityClipboard,
+    prefab_stack: PrefabEditStack,
+    autosave: AutosaveState,
+    recovery_prompt: Option<(PathBuf, PathBuf)>,
 }
 
 impl EditorApp {
@@ -918,6 +930,11 @@ impl EditorApp {
             play_mode: PlayModeState::default(),
             started_at: Instant::now(),
             console,
+            recovery_prompt: autosave::pending_recovery(&project),
+            project,
+            clipboard: EntityClipboard::default(),
+            prefab_stack: PrefabEditStack::default(),
+            autosave: AutosaveState::default(),
         };
 
         if let Some(last_scene) = app.config.last_opened_scene.clone() {
@@ -2692,6 +2709,9 @@ impl EditorApp {
         let mut redo = false;
         let mut delete_selected = false;
         let mut duplicate_selected = false;
+        let mut copy_selected = false;
+        let mut cut_selected = false;
+        let mut paste_selected = false;
         let mut begin_rename = false;
         let mut clear_selection = false;
         let mut play_toggle = false;
@@ -2734,6 +2754,18 @@ impl EditorApp {
             duplicate_selected = input.consume_shortcut(&egui::KeyboardShortcut::new(
                 egui::Modifiers::CTRL,
                 egui::Key::D,
+            ));
+            copy_selected = input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::CTRL,
+                egui::Key::C,
+            ));
+            cut_selected = input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::CTRL,
+                egui::Key::X,
+            ));
+            paste_selected = input.consume_shortcut(&egui::KeyboardShortcut::new(
+                egui::Modifiers::CTRL,
+                egui::Key::V,
             ));
 
             delete_selected = input.key_pressed(egui::Key::Delete);
@@ -2778,6 +2810,18 @@ impl EditorApp {
             let selection_hint = self.command_history.redo(&mut self.world);
             self.apply_selection_hint(selection_hint);
             self.unsaved_changes = true;
+        }
+
+        if copy_selected {
+            self.copy_selection_to_clipboard(false);
+        }
+
+        if cut_selected {
+            self.copy_selection_to_clipboard(true);
+        }
+
+        if paste_selected {
+            self.paste_clipboard();
         }
 
         if duplicate_selected {
@@ -2828,11 +2872,15 @@ impl EditorApp {
     }
 
     fn cmd_delete_selected(&mut self) {
-        let Some(entity) = self.selection.primary() else {
+        let entities: Vec<Entity> = self.selection.all().collect();
+        if entities.is_empty() {
             return;
-        };
-
-        self.cmd_delete_entity(entity);
+        }
+        self.command_history.begin_transaction("Delete selection");
+        for entity in entities {
+            self.cmd_delete_entity(entity);
+        }
+        self.command_history.end_transaction();
     }
 
     fn cmd_delete_entity(&mut self, entity: Entity) {
@@ -2846,11 +2894,15 @@ impl EditorApp {
     }
 
     fn cmd_duplicate_selected(&mut self) {
-        let Some(entity) = self.selection.primary() else {
+        let entities: Vec<Entity> = self.selection.all().collect();
+        if entities.is_empty() {
             return;
-        };
-
-        self.cmd_duplicate_entity(entity);
+        }
+        self.command_history.begin_transaction("Duplicate selection");
+        for entity in entities {
+            self.cmd_duplicate_entity(entity);
+        }
+        self.command_history.end_transaction();
     }
 
     fn cmd_duplicate_entity(&mut self, entity: Entity) {
@@ -3970,6 +4022,13 @@ impl EditorApp {
                     SceneDeserializer::new(world, component_registry, type_registry, asset_server)
                         .with_external_components(&render_scene_adapter);
                 let _ = deserializer.load_file(path)?;
+                let _ = expand_all_instances(
+                    world,
+                    component_registry,
+                    type_registry,
+                    asset_server,
+                    Some(&render_scene_adapter as &dyn engine_assets::SceneExternalComponents),
+                )?;
                 Ok(())
             },
         )?;
@@ -4334,6 +4393,25 @@ impl EditorApp {
 
     fn show_scene_tree_panel(&mut self, ui: &mut egui::Ui) {
         ui.heading("Scene Hierarchy");
+        if !self.prefab_stack.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                let labels: Vec<String> = self
+                    .prefab_stack
+                    .frames
+                    .iter()
+                    .map(|f| f.label.clone())
+                    .collect();
+                for (index, label) in labels.iter().enumerate() {
+                    if index > 0 {
+                        ui.label(">");
+                    }
+                    if ui.small_button(label).clicked() {
+                        self.navigate_prefab_breadcrumb(index);
+                    }
+                }
+            });
+            ui.separator();
+        }
         ui.separator();
 
         let mut pending_action = None;
@@ -4473,7 +4551,7 @@ impl EditorApp {
             return;
         }
 
-        let is_selected = self.selection.primary() == Some(entity);
+        let is_selected = self.selection.contains(entity);
         ui.horizontal(|ui| {
             ui.add_space(indent);
 
@@ -4500,7 +4578,14 @@ impl EditorApp {
             let response = ui.selectable_label(is_selected, name);
 
             if response.clicked() {
-                self.selection.select_single(entity);
+                let modifiers = ui.input(|i| i.modifiers);
+                if modifiers.command || modifiers.ctrl {
+                    self.selection.toggle(entity);
+                } else if modifiers.shift {
+                    self.selection.add(entity);
+                } else {
+                    self.selection.select_single(entity);
+                }
             }
 
             if response.drag_started() {
@@ -4533,6 +4618,13 @@ impl EditorApp {
                 if ui.button("Add Child Entity").clicked() {
                     *pending_action = Some(SceneTreeAction::AddChildEntity(entity));
                     ui.close_menu();
+                }
+
+                if self.world.get::<SceneInstance>(entity).is_some() {
+                    if ui.button("Open Prefab").clicked() {
+                        self.open_prefab_for_instance(entity);
+                        ui.close_menu();
+                    }
                 }
 
                 ui.separator();
@@ -4577,7 +4669,161 @@ impl EditorApp {
     }
 
     fn entity_name_for_scene_tree(&self, entity: Entity) -> String {
-        scene_tree_entity_name(&self.world, entity)
+        let mut name = scene_tree_entity_name(&self.world, entity);
+        if self.world.get::<SceneInstance>(entity).is_some() {
+            name = format!("[I] {name}");
+        } else if self.world.get::<InheritedEntity>(entity).is_some() {
+            name = format!("> {name}");
+        }
+        name
+    }
+
+    fn open_prefab_for_instance(&mut self, entity: Entity) {
+        let Some(instance) = self.world.get::<SceneInstance>(entity).cloned() else {
+            return;
+        };
+        let relative = instance
+            .0
+            .scene_path
+            .clone()
+            .or_else(|| {
+                self.asset_server
+                    .database()
+                    .and_then(|db| db.resolve_relative_path(instance.0.scene).map(str::to_owned))
+            });
+        let Some(relative) = relative else {
+            self.log_message(LogLevel::Warn, "Cannot open prefab: nested scene path is unresolved");
+            return;
+        };
+        let path = self.project.paths.assets_dir().join(&relative);
+        if self.unsaved_changes {
+            if let Some(current) = self.file_path.clone() {
+                let _ = self.save_scene_to_path(&current);
+            }
+        }
+        if let Some(current) = self.file_path.clone() {
+            let label = current
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Scene")
+                .to_owned();
+            if self.prefab_stack.is_empty() {
+                self.prefab_stack.push(PrefabEditFrame {
+                    scene_path: current,
+                    scene_id: None,
+                    label,
+                    unsaved: false,
+                });
+            }
+        }
+        let label = Path::new(&relative)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Prefab")
+            .to_owned();
+        if let Err(error) = self.load_scene(&path) {
+            self.log_message(LogLevel::Error, format!("Failed to open prefab: {error}"));
+            return;
+        }
+        self.file_path = Some(path.clone());
+        self.prefab_stack.push(PrefabEditFrame {
+            scene_path: path,
+            scene_id: Some(instance.0.scene),
+            label,
+            unsaved: false,
+        });
+    }
+
+    fn navigate_prefab_breadcrumb(&mut self, index: usize) {
+        let _ = self.prefab_stack.truncate_to(index);
+        if let Some(frame) = self.prefab_stack.current().cloned() {
+            if let Err(error) = self.load_scene(&frame.scene_path) {
+                self.log_message(LogLevel::Error, format!("Failed to return to scene: {error}"));
+                return;
+            }
+            self.file_path = Some(frame.scene_path);
+        }
+    }
+
+    fn save_scene_to_path(&mut self, path: &Path) -> Result<()> {
+        self.save_scene(path)?;
+        self.unsaved_changes = false;
+        autosave::clear_dirty_marker(&self.project);
+        Ok(())
+    }
+
+    fn copy_selection_to_clipboard(&mut self, cut: bool) {
+        let entities: Vec<Entity> = self.selection.all().collect();
+        if entities.is_empty() {
+            return;
+        }
+        let component_registry = self
+            .world
+            .remove_resource::<ComponentRegistry>()
+            .unwrap_or_default();
+        self.clipboard.clear();
+        self.clipboard.cut = cut;
+        for entity in &entities {
+            if let Some(captured) =
+                capture_clipboard_entity(&self.world, &component_registry, *entity)
+            {
+                self.clipboard.entries.push(captured);
+            }
+        }
+        self.world.insert_resource(component_registry);
+        if cut {
+            self.command_history.begin_transaction("Cut entities");
+            for entity in entities {
+                self.cmd_delete_entity(entity);
+            }
+            self.command_history.end_transaction();
+            self.unsaved_changes = true;
+        }
+    }
+
+    fn paste_clipboard(&mut self) {
+        if self.clipboard.is_empty() {
+            return;
+        }
+        let parent = self.selection.primary();
+        let as_local = parent.and_then(|entity| {
+            self.world
+                .get::<SceneInstance>(entity)
+                .map(|_| entity)
+                .or_else(|| {
+                    self.world
+                        .get::<InheritedEntity>(entity)
+                        .map(|inherited| inherited.instance_root)
+                })
+        });
+        let component_registry = self
+            .world
+            .remove_resource::<ComponentRegistry>()
+            .unwrap_or_default();
+        self.command_history.begin_transaction("Paste entities");
+        let mut first = None;
+        let mut entries = std::mem::take(&mut self.clipboard.entries);
+        for entry in &entries {
+            if let Some(entity) = paste_clipboard_entity(
+                &mut self.world,
+                &component_registry,
+                entry,
+                parent,
+                as_local,
+            ) {
+                if first.is_none() {
+                    first = Some(entity);
+                }
+            }
+        }
+        self.clipboard.entries = entries;
+        self.world.insert_resource(component_registry);
+        self.command_history.end_transaction();
+        if let Some(entity) = first {
+            self.selection.select_single(entity);
+        }
+        self.clipboard.cut = false;
+        self.unsaved_changes = true;
     }
 
     fn show_inspector_panel(&mut self, ui: &mut egui::Ui) {
@@ -4585,6 +4831,21 @@ impl EditorApp {
             .scope(|ui| {
                 ui.heading("Inspector");
                 ui.separator();
+                if let Some(entity) = self.selection.primary() {
+                    if let Some(instance) = self.world.get::<SceneInstance>(entity) {
+                        ui.label(format!(
+                            "Scene Instance ({})",
+                            instance.0.scene_path.as_deref().unwrap_or("by id")
+                        ));
+                        ui.label(format!(
+                            "overrides: {}  removed: {}  added: {}",
+                            instance.0.overrides.len(),
+                            instance.0.removed.len(),
+                            instance.0.added.len()
+                        ));
+                        ui.separator();
+                    }
+                }
                 if InspectorPanel::show(
                     ui,
                     &mut self.world,
@@ -5023,6 +5284,65 @@ impl eframe::App for EditorApp {
                 .show(ctx, &mut tab_viewer);
         }
         self.dock_state = dock_state;
+
+        if let Some((autosave_path, original)) = self.recovery_prompt.clone() {
+            egui::Window::new("Recover unsaved scene?")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(format!(
+                        "An autosave is newer than:\n{}",
+                        original.display()
+                    ));
+                    ui.horizontal(|ui| {
+                        if ui.button("Recover").clicked() {
+                            if let Err(error) = self.load_scene(&autosave_path) {
+                                self.log_message(
+                                    LogLevel::Error,
+                                    format!("Recovery failed: {error}"),
+                                );
+                            } else {
+                                self.file_path = Some(original.clone());
+                                self.unsaved_changes = true;
+                                self.log_message(LogLevel::Info, "Recovered scene from autosave");
+                            }
+                            self.recovery_prompt = None;
+                        }
+                        if ui.button("Discard").clicked() {
+                            autosave::clear_dirty_marker(&self.project);
+                            self.recovery_prompt = None;
+                        }
+                    });
+                });
+        }
+
+        if self.unsaved_changes && self.autosave.due() {
+            if let Some(path) = self.file_path.clone() {
+                let scene_name = path
+                    .file_stem()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("Untitled");
+                let render_scene_adapter = RenderSceneAdapter;
+                let serialized = self.with_scene_context(
+                    |world, component_registry, type_registry, metadata_registry, asset_server| {
+                        let serializer =
+                            SceneSerializer::new(world, component_registry, type_registry)
+                                .with_metadata_registry(metadata_registry)
+                                .with_asset_server(asset_server)
+                                .with_external_components(&render_scene_adapter);
+                        serializer.serialize_world(scene_name)
+                    },
+                );
+                if let Ok(scene) = serialized {
+                    if let Err(error) = autosave::write_autosave(&self.project, &path, &scene) {
+                        self.log_message(LogLevel::Warn, format!("Autosave failed: {error}"));
+                    } else {
+                        self.autosave.mark_saved();
+                    }
+                }
+            }
+        }
 
         self.draw_modals(ctx);
     }
