@@ -110,6 +110,7 @@ jobs:
         # side effect to guard against, so this step does not assert a
         # clean working tree afterward.
         run: |
+          cargo build -p example_gameplay
           cargo run -p starman-cli -- validate examples/reference-project
           cargo run -p starman-cli -- import examples/reference-project
           cargo run -p starman-cli -- test examples/reference-project

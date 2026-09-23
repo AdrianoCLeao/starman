@@ -19,5 +19,7 @@ criterion.workspace = true
 engine-assets = { path = "../../crates/engine-assets" }
 engine-core = { path = "../../crates/engine-core" }
 engine-math = { path = "../../crates/engine-math" }
+engine-plugin = { path = "../../crates/engine-plugin" }
 engine-reflect = { path = "../../crates/engine-reflect" }
 engine-render = { path = "../../crates/engine-render" }
+serde_json.workspace = true

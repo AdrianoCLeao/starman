@@ -3,7 +3,22 @@
     id: "bedc6c7d-6817-47c9-857b-0279e69ea682",
     name: "Starman Reference Project",
     entry_scene: "scenes/level.scene.ron",
-    plugins: [],
+    plugins: [
+        (
+            name: "example_gameplay",
+            version_req: Some("^0.1"),
+            path: Some("../plugins/example_gameplay"),
+        ),
+    ],
+    scripts: (
+        entry: Some("scripts/main.lua"),
+        roots: ["scripts/"],
+    ),
+    permissions: (
+        filesystem: ["assets/**", "scripts/**", "saves/**"],
+        process: false,
+        network: false,
+    ),
     settings: {},
     targets: [],
 )

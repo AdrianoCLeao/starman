@@ -35,7 +35,20 @@ Uma capacidade só está pronta quando:
 
 ## Estado atual
 
-Com o M2 fechado, a base contém tudo do M1 mais:
+Com o M3 fechado, a base contém tudo do M2 mais:
+
+- ABI C v1 (`starman-plugin-sdk`) com negotiate/lifecycle, capability flags e panic fence;
+- host larga de comandos/queries (`engine-plugin`) compartilhada por plugins e Lua;
+- shadow-copy de bibliotecas, ownership de registros dinâmicos por `PluginId`;
+- runtime Lua 5.4 in-process com hot reload de `STARMAN_PERSIST`, coroutines e debugger básico;
+- permissões deny-by-default no manifesto; play in-process no editor (standalone preview permanece);
+- reference-project com `scripts/main.lua` e `example_gameplay` cdylib.
+
+Limitações conscientes que ainda valem:
+
+- render graph / PBR ainda são M4/M5;
+- project manager completo é M7; builds distribuíveis são M8;
+
 
 - **cenas aninhadas / prefabs**: `SceneFile` v3 com `SceneInstanceData`, instâncias vivas no world (`engine-scene`), detecção de ciclos, overrides empilhados (apply/revert/promote), diff estrutural, e expansão no runner/editor;
 - edição isolada de prefab com breadcrumb, multi-seleção, clipboard, undo/redo transacional, autosave/recovery crash-safe;
@@ -43,7 +56,6 @@ Com o M2 fechado, a base contém tudo do M1 mais:
 
 Os maiores gaps estruturais que restam são:
 
-- não existe ainda um contrato de plugin/ABI estável (M3);
 - o renderer precisa ser separado em extração, preparação, fila e execução antes de crescer (M4);
 - a garantia de referência tipada por ID só vale para cenas já salvas depois da migração — o formato legado por caminho continua lido, mas não é reescrito sozinho por uma leitura (ver "migração ao salvar" em `docs/asset-pipeline.md`);
 - não há ainda uma vertical slice distribuível que prove o workflow completo.
@@ -289,7 +301,7 @@ Esses itens podem entrar depois, por evidência de produto, sem contaminar as fu
 
 ## Próximo ciclo recomendado
 
-Com M0–M2 fechados, o próximo ciclo inicia M3 (runtime extensível: Rust, Lua e plugins).
+Com M0–M3 fechados, o próximo ciclo inicia M4 (renderer escalável / render graph).
 
 ## Indicadores de progresso
 

@@ -255,12 +255,70 @@ fn bench_scene_load_with_database(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_host_set_get_field(c: &mut Criterion) {
+    c.bench_function("host_set_get_field_1000", |b| {
+        b.iter_batched(
+            || {
+                let mut world = create_world();
+                let mut components = ComponentRegistry::default();
+                let mut types = ReflectTypeRegistry::default();
+                let mut meta = ReflectMetadataRegistry::default();
+                register_core_reflection_types(&mut types, &mut components, &mut meta);
+                let guard = engine_plugin::PermissionGuard::new(
+                    "/tmp/bench",
+                    engine_plugin::ProjectPermissions::default(),
+                );
+                let mut bus = engine_plugin::HostBus::new(guard);
+                let handle = bus
+                    .execute(
+                        &mut world,
+                        &components,
+                        engine_plugin::HostCommand::Spawn { name: None },
+                    )
+                    .unwrap();
+                let id = handle.as_u64().unwrap();
+                (world, components, types, bus, id)
+            },
+            |(mut world, components, types, mut bus, id)| {
+                for i in 0..1000 {
+                    let y = (i as f32) * 0.001;
+                    bus.execute(
+                        &mut world,
+                        &components,
+                        engine_plugin::HostCommand::SetField {
+                            entity: engine_plugin::EntityHandle(id),
+                            component: "Transform".into(),
+                            field_path: "translation.y".into(),
+                            value: serde_json::json!(y),
+                        },
+                    )
+                    .unwrap();
+                    let _ = bus
+                        .query(
+                            &world,
+                            &components,
+                            &types,
+                            engine_plugin::HostQuery::GetField {
+                                entity: engine_plugin::EntityHandle(id),
+                                component: "Transform".into(),
+                                field_path: "translation.y".into(),
+                            },
+                        )
+                        .unwrap();
+                }
+            },
+            BatchSize::SmallInput,
+        );
+    });
+}
+
 criterion_group!(
     baseline,
     bench_world_spawn,
     bench_transform_propagation,
     bench_asset_lookup,
     bench_import_incremental,
-    bench_scene_load_with_database
+    bench_scene_load_with_database,
+    bench_host_set_get_field
 );
 criterion_main!(baseline);
