@@ -170,6 +170,11 @@ pub fn split_sub_key(path: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// The project's assets directory on disk, for subsystems that read
+/// folders rather than single assets (localization, tools).
+#[derive(bevy_ecs::prelude::Resource, Clone, Debug, PartialEq, Eq)]
+pub struct AssetsRoot(pub std::path::PathBuf);
+
 /// Load progress of a typed handle.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoadState {

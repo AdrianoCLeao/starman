@@ -1,0 +1,31 @@
+[package]
+name = "engine-ui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Retained game UI: layouts, styles, text, focus navigation, data binding"
+
+[dependencies]
+bevy_ecs.workspace = true
+bevy_reflect.workspace = true
+bytemuck.workspace = true
+cosmic-text.workspace = true
+engine-assets = { path = "../engine-assets" }
+engine-core = { path = "../engine-core" }
+engine-input = { path = "../engine-input" }
+engine-localization = { path = "../engine-localization" }
+engine-math = { path = "../engine-math" }
+engine-reflect = { path = "../engine-reflect" }
+engine-render = { path = "../engine-render" }
+gilrs.workspace = true
+log.workspace = true
+ron.workspace = true
+serde.workspace = true
+taffy.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+
+[dev-dependencies]
+pollster = "0.3"
+image.workspace = true

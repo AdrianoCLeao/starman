@@ -22,6 +22,8 @@ pub struct RuntimeOptions {
     pub assets: Option<Assets>,
     /// Project game settings to apply after the plugins are installed.
     pub game_settings: Option<GameSettings>,
+    /// The project's `assets/` directory (localization folders, tools).
+    pub assets_root: Option<std::path::PathBuf>,
 }
 
 impl Default for RuntimeOptions {
@@ -30,6 +32,7 @@ impl Default for RuntimeOptions {
             fixed_timestep_seconds: DEFAULT_FIXED_TIMESTEP_SECONDS,
             assets: None,
             game_settings: None,
+            assets_root: None,
         }
     }
 }
@@ -44,6 +47,11 @@ impl RuntimeOptions {
         self.game_settings = Some(settings);
         self
     }
+
+    pub fn with_assets_root(mut self, root: impl Into<std::path::PathBuf>) -> Self {
+        self.assets_root = Some(root.into());
+        self
+    }
 }
 
 /// The engine's standard plugin set, in installation order.
@@ -54,6 +62,8 @@ pub fn default_plugins() -> Vec<Box<dyn RuntimePlugin>> {
         Box::new(engine_physics::PhysicsPlugin),
         Box::new(engine_animation::AnimationPlugin),
         Box::new(engine_vfx::VfxPlugin),
+        Box::new(engine_localization::LocalizationPlugin),
+        Box::new(engine_ui::UiPlugin),
         Box::new(engine_render::RenderPlugin),
     ]
 }
@@ -69,6 +79,9 @@ pub fn build_runtime(options: &RuntimeOptions) -> GameRuntime {
     if let Some(assets) = &options.assets {
         runtime.insert_resource(assets.clone());
     }
+    if let Some(root) = &options.assets_root {
+        runtime.insert_resource(engine_assets::AssetsRoot(root.clone()));
+    }
     install_default_plugins(&mut runtime);
     if let Some(settings) = &options.game_settings {
         apply_game_settings(&mut runtime, settings);
@@ -81,7 +94,63 @@ pub fn build_runtime(options: &RuntimeOptions) -> GameRuntime {
 pub fn apply_game_settings(runtime: &mut GameRuntime, settings: &GameSettings) {
     apply_input_settings(runtime, &settings.input);
     apply_physics_settings(runtime, &settings.physics);
+    apply_ui_settings(runtime, &settings.ui);
+    apply_localization_settings(runtime, &settings.localization);
     runtime.insert_resource(ProjectGameSettings(settings.clone()));
+}
+
+fn apply_ui_settings(runtime: &mut GameRuntime, ui: &engine_project::UiSettings) {
+    let Some(mut current) = runtime.world.get_resource_mut::<engine_ui::UiSettings>() else {
+        return;
+    };
+    let [w, h] = ui.reference_resolution;
+    let next = engine_ui::UiSettings {
+        reference_resolution: engine_math::Vec2::new(w as f32, h as f32),
+        scale_mode: match ui.scale_mode {
+            engine_project::UiScaleMode::MatchHeight => engine_ui::ScaleMode::MatchHeight,
+            engine_project::UiScaleMode::MatchWidth => engine_ui::ScaleMode::MatchWidth,
+            engine_project::UiScaleMode::Fit => engine_ui::ScaleMode::Fit,
+            engine_project::UiScaleMode::ConstantPixelSize => {
+                engine_ui::ScaleMode::ConstantPixelSize
+            }
+        },
+        user_scale: current.user_scale,
+        fonts: ui.default_font.iter().cloned().collect(),
+    };
+    if *current != next {
+        *current = next;
+    }
+}
+
+/// Loads `assets/<root>/<locale>/*.ftl` when the assets directory is known
+/// (hosts insert [`engine_assets::AssetsRoot`]); keeps the active locale.
+fn apply_localization_settings(
+    runtime: &mut GameRuntime,
+    settings: &engine_project::LocalizationSettings,
+) {
+    let Some(root) = runtime
+        .world
+        .get_resource::<engine_assets::AssetsRoot>()
+        .cloned()
+    else {
+        return;
+    };
+    let previous = runtime
+        .world
+        .get_resource::<engine_localization::Localization>()
+        .map(|l| l.current().to_owned());
+    let mut localization = engine_localization::Localization::load(
+        root.0.join(&settings.root),
+        &settings.default_locale,
+        &settings.supported,
+    );
+    for issue in localization.issues() {
+        log::warn!(target: "engine::l10n", "{issue}");
+    }
+    if let Some(locale) = previous {
+        localization.set_locale(&locale);
+    }
+    runtime.world.insert_resource(localization);
 }
 
 fn apply_physics_settings(runtime: &mut GameRuntime, physics: &engine_project::PhysicsSettings) {

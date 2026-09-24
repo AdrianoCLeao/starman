@@ -17,6 +17,7 @@ path = "src/lib.rs"
 clap.workspace = true
 engine-assets = { path = "../engine-assets" }
 engine-core = { path = "../engine-core" }
+engine-localization = { path = "../engine-localization" }
 engine-project = { path = "../engine-project" }
 engine-runner = { path = "../engine-runner" }
 engine-scene = { path = "../engine-scene" }

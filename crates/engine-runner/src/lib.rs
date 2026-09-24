@@ -394,6 +394,10 @@ fn configure_runner_world(engine: &mut Engine<RunnerModules>) {
 
     let assets = engine.modules.assets.asset_server().assets().clone();
     engine.runtime.insert_resource(assets);
+    let root = std::path::PathBuf::from(engine.modules.assets.asset_server().root().as_str());
+    engine
+        .runtime
+        .insert_resource(engine_assets::AssetsRoot(root));
     engine_runtime::install_default_plugins(&mut engine.runtime);
     if let Some(settings) = engine.modules.game_settings.clone() {
         engine_runtime::apply_game_settings(&mut engine.runtime, &settings);

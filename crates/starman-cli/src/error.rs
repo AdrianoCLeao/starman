@@ -28,6 +28,9 @@ pub enum CliError {
     },
     /// Creating, opening, or running a project/scene failed.
     Engine { path: PathBuf, source: EngineError },
+    /// A content check found problems (`l10n check`, `save verify`,
+    /// playthroughs).
+    Check { path: PathBuf, report: String },
 }
 
 impl CliError {
@@ -36,6 +39,7 @@ impl CliError {
             CliError::Validation { .. } => 2,
             CliError::Import { .. } => 3,
             CliError::Engine { .. } => 4,
+            CliError::Check { .. } => 5,
         }
     }
 }
@@ -58,6 +62,9 @@ impl fmt::Display for CliError {
             }
             CliError::Engine { path, source } => {
                 write!(f, "failed for '{}': {source}", path.display())
+            }
+            CliError::Check { path, report } => {
+                write!(f, "check failed for '{}':\n{report}", path.display())
             }
         }
     }

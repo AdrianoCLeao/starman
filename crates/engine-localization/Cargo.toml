@@ -1,0 +1,15 @@
+[package]
+name = "engine-localization"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Fluent-based localization: locales, fallback, runtime switching, checks"
+
+[dependencies]
+bevy_ecs.workspace = true
+engine-core = { path = "../engine-core" }
+fluent-bundle.workspace = true
+fluent-syntax = "0.12"
+log.workspace = true
+unic-langid.workspace = true

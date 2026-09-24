@@ -144,6 +144,8 @@ pub struct InputState {
     new_presses: Vec<(InputDevice, InputSource)>,
     /// Gamepad connection changes this frame.
     gamepad_changes: Vec<(usize, bool)>,
+    /// Characters typed this frame (text fields), control characters removed.
+    typed_text: String,
 }
 
 impl Default for InputState {
@@ -161,6 +163,7 @@ impl Default for InputState {
             active_devices: Vec::new(),
             new_presses: Vec::new(),
             gamepad_changes: Vec::new(),
+            typed_text: String::new(),
         }
     }
 }
@@ -175,6 +178,7 @@ impl InputState {
         self.active_devices.clear();
         self.new_presses.clear();
         self.gamepad_changes.clear();
+        self.typed_text.clear();
 
         for gamepad in self.gamepads.values_mut() {
             gamepad.buttons.begin_frame();
@@ -205,6 +209,22 @@ impl InputState {
         if let PhysicalKey::Code(code) = event.physical_key {
             self.process_key_input(code, event.state, event.repeat);
         }
+        if event.state == ElementState::Pressed {
+            if let Some(text) = &event.text {
+                self.process_text(text);
+            }
+        }
+    }
+
+    /// Text produced by the keyboard (layout- and IME-aware).
+    pub fn process_text(&mut self, text: &str) {
+        self.typed_text
+            .extend(text.chars().filter(|c| !c.is_control()));
+    }
+
+    /// Characters typed this frame.
+    pub fn typed_text(&self) -> &str {
+        &self.typed_text
     }
 
     pub fn process_key_input(&mut self, code: KeyCode, state: ElementState, repeat: bool) {
@@ -485,6 +505,7 @@ enum BufferedWindowEvent {
         dx: f32,
         dy: f32,
     },
+    Text(String),
 }
 
 pub struct InputModule {
@@ -545,6 +566,11 @@ impl InputModule {
                     state: event.state,
                     repeat: event.repeat,
                 });
+                if event.state == ElementState::Pressed {
+                    if let Some(text) = &event.text {
+                        self.push_buffered_event(BufferedWindowEvent::Text(text.to_string()));
+                    }
+                }
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.push_buffered_event(BufferedWindowEvent::MouseButton {
@@ -607,6 +633,7 @@ impl InputModule {
                 BufferedWindowEvent::MouseMotion { dx, dy } => {
                     input_state.process_mouse_motion(dx, dy)
                 }
+                BufferedWindowEvent::Text(text) => input_state.process_text(&text),
             }
         }
 

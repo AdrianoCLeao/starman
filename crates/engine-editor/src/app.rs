@@ -6398,6 +6398,7 @@ fn build_editor_world(asset_server: &AssetServer, project: &Project) -> World {
     engine_runtime::build_runtime(
         &engine_runtime::RuntimeOptions::default()
             .with_assets(asset_server.assets().clone())
+            .with_assets_root(project.paths.assets_dir())
             .with_game_settings(project.manifest.game.clone()),
     )
     .world

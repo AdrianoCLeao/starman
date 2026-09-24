@@ -30,8 +30,8 @@ pub mod watch;
 
 pub use server_typed::AssetUpdateReport;
 pub use typed::{
-    split_sub_key, Asset, AssetLoader, AssetRef, AssetSummary, Assets, LoadContext, LoadState,
-    ResolvedSource, StoreStats,
+    split_sub_key, Asset, AssetLoader, AssetRef, AssetSummary, Assets, AssetsRoot, LoadContext,
+    LoadState, ResolvedSource, StoreStats,
 };
 
 static NEXT_ASSET_ID: AtomicU64 = AtomicU64::new(1);

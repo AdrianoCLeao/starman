@@ -31,4 +31,16 @@ pub enum Command {
     Test { path: PathBuf },
     /// Persist pending format migrations (with backups).
     Migrate { path: PathBuf },
+    /// Localization tools.
+    L10n {
+        #[command(subcommand)]
+        action: L10nAction,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum L10nAction {
+    /// Report parse errors and keys missing from (or unknown to) the
+    /// default locale; fails on errors and missing keys.
+    Check { path: PathBuf },
 }

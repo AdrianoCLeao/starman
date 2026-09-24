@@ -6,7 +6,7 @@ pub mod cli;
 pub mod commands;
 pub mod error;
 
-pub use cli::{Cli, Command};
+pub use cli::{Cli, Command, L10nAction};
 pub use error::CliError;
 
 /// Executes the parsed command, returning a human-readable success message
@@ -43,6 +43,9 @@ pub fn dispatch(cli: Cli) -> Result<String, CliError> {
             Ok("Runner exited cleanly.".to_owned())
         }
         Command::Migrate { path } => Ok(commands::migrate::run(path)?.message()),
+        Command::L10n {
+            action: L10nAction::Check { path },
+        } => commands::l10n::check(path),
         Command::Test { path } => {
             let outcome = commands::test::run(path)?;
             Ok(format!(
