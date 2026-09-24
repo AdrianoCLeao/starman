@@ -1,0 +1,26 @@
+[package]
+name = "engine-vfx"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Particle effects: authored emitters simulated on the GPU (compute) or CPU"
+
+[dependencies]
+bevy_ecs.workspace = true
+bevy_reflect.workspace = true
+bytemuck.workspace = true
+engine-assets = { path = "../engine-assets" }
+engine-core = { path = "../engine-core" }
+engine-math = { path = "../engine-math" }
+engine-physics = { path = "../engine-physics" }
+engine-reflect = { path = "../engine-reflect" }
+engine-render = { path = "../engine-render" }
+log.workspace = true
+ron.workspace = true
+serde.workspace = true
+wgpu.workspace = true
+
+[dev-dependencies]
+pollster = "0.3"
+image.workspace = true

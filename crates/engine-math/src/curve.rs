@@ -1,7 +1,8 @@
 //! Keyframed curves with step, linear and cubic (Hermite) interpolation,
-//! shared by bone tracks, property tracks and the editor's curve widgets.
+//! shared by animation tracks, particle modules and the editor's curve
+//! widgets. A `Curve<Vec4>` doubles as a color gradient.
 
-use engine_math::{Quat, Vec2, Vec3, Vec4};
+use crate::{Quat, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

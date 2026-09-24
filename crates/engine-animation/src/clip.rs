@@ -13,9 +13,9 @@ use engine_core::Result;
 use engine_math::{Quat, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
-use crate::curve::{Animatable, Curve, Interpolation};
 use crate::gltf_import::gltf_document;
 use crate::skeleton::{BoneTransform, Skeleton};
+use engine_math::curve::{Animatable, Curve, Interpolation};
 
 pub const ANIMATION_CLIP_VERSION: u32 = 1;
 

@@ -1878,6 +1878,7 @@ name = "engine-math"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "serde",
 ]
 
 [[package]]
@@ -1997,6 +1998,7 @@ dependencies = [
  "engine-physics",
  "engine-project",
  "engine-render",
+ "engine-vfx",
  "log",
 ]
 
@@ -2029,6 +2031,27 @@ dependencies = [
  "pollster 0.3.0",
  "serde",
  "serde_json",
+ "wgpu",
+]
+
+[[package]]
+name = "engine-vfx"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "bevy_reflect",
+ "bytemuck",
+ "engine-assets",
+ "engine-core",
+ "engine-math",
+ "engine-physics",
+ "engine-reflect",
+ "engine-render",
+ "image",
+ "log",
+ "pollster 0.3.0",
+ "ron",
+ "serde",
  "wgpu",
 ]
 

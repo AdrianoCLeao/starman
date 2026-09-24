@@ -8,7 +8,6 @@
 pub mod blend;
 pub mod clip;
 pub mod components;
-pub mod curve;
 pub mod gltf_import;
 pub mod graph;
 pub mod ik;
@@ -28,7 +27,7 @@ pub use components::{
     InverseKinematics, LookAtChain, PlaybackLoop, PlayerRuntime, SkeletonInstance, SkinnedMesh,
     TwoBoneChain,
 };
-pub use curve::{Animatable, Curve, Interpolation};
+pub use engine_math::curve::{self, Animatable, Curve, Interpolation};
 pub use graph::{
     AnimGraph, AnimGraphLoader, Blend2DMode, BlendChild1D, BlendChild2D, BoneMask, Condition,
     GraphLayer, LayerBlend, Motion, ParameterDef, ParameterValue, State, StateMachine, Transition,

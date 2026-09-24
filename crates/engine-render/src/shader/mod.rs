@@ -63,6 +63,9 @@ type VariantKey = (String, Vec<String>);
 pub struct ShaderLibrary {
     root: PathBuf,
     cache_dir: PathBuf,
+    /// In-memory sources registered by extensions (checked before disk),
+    /// keyed by virtual path (`vfx/particles.wgsl`).
+    virtual_sources: HashMap<String, String>,
     /// Expanded (include-resolved, preprocessed) sources per variant.
     expanded: HashMap<VariantKey, ExpandedShader>,
     modules: HashMap<VariantKey, Arc<wgpu::ShaderModule>>,
@@ -74,6 +77,7 @@ impl ShaderLibrary {
         Self {
             root: root.into(),
             cache_dir: cache_dir.into(),
+            virtual_sources: HashMap::new(),
             expanded: HashMap::new(),
             modules: HashMap::new(),
             legacy_modules: HashMap::new(),
@@ -92,6 +96,22 @@ impl ShaderLibrary {
         &self.root
     }
 
+    /// Registers an in-memory source under `path` (extensions ship their
+    /// WGSL with `include_str!`; it may `#include` the built-in modules).
+    /// Re-registering different text invalidates cached expansions.
+    pub fn add_source(&mut self, path: impl Into<String>, source: impl Into<String>) {
+        let path = path.into();
+        let source = source.into();
+        if self.virtual_sources.get(&path) != Some(&source) {
+            self.virtual_sources.insert(path, source);
+            self.invalidate();
+        }
+    }
+
+    pub fn has_source(&self, path: &str) -> bool {
+        self.virtual_sources.contains_key(path)
+    }
+
     /// Expands `#include`s only (no defines), for tools.
     pub fn expand_source(&mut self, relative: &str) -> Result<String> {
         Ok(self.expand_variant(relative, &[])?.source)
@@ -105,6 +125,7 @@ impl ShaderLibrary {
         }
         let mut state = Preprocessor {
             root: &self.root,
+            virtual_sources: &self.virtual_sources,
             defines: defines.iter().map(|d| (*d).to_owned()).collect(),
             included: HashSet::new(),
             stack: Vec::new(),
@@ -239,6 +260,7 @@ fn validate_wgsl(relative: &str, defines: &[&str], expanded: &ExpandedShader) ->
 
 struct Preprocessor<'a> {
     root: &'a Path,
+    virtual_sources: &'a HashMap<String, String>,
     defines: HashSet<String>,
     included: HashSet<String>,
     stack: Vec<String>,
@@ -268,13 +290,18 @@ impl Preprocessor<'_> {
             // Implicit include guard.
             return Ok(());
         }
-        let path = self.root.join(relative);
-        let text = std::fs::read_to_string(&path).map_err(|error| {
-            EngineError::Render(format!(
-                "failed to read shader '{}': {error}",
-                path.display()
-            ))
-        })?;
+        let text = match self.virtual_sources.get(relative) {
+            Some(text) => text.clone(),
+            None => {
+                let path = self.root.join(relative);
+                std::fs::read_to_string(&path).map_err(|error| {
+                    EngineError::Render(format!(
+                        "failed to read shader '{}': {error}",
+                        path.display()
+                    ))
+                })?
+            }
+        };
         self.stack.push(relative.to_owned());
 
         let mut conditionals: Vec<Conditional> = Vec::new();

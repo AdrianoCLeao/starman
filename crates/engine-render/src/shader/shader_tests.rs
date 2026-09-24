@@ -125,3 +125,24 @@ fn every_builtin_shader_variant_parses_and_validates() {
             .unwrap_or_else(|error| panic!("{path} {defines:?}: {error}"));
     }
 }
+
+#[test]
+fn virtual_sources_include_builtin_modules_and_invalidate_on_change() {
+    let mut library = ShaderLibrary::builtin();
+    library.add_source(
+        "ext/effect.wgsl",
+        "#include \"common/view.wgsl\"\n#ifdef GLOW\nconst GLOW: f32 = 1.0;\n#endif\n",
+    );
+    assert!(library.has_source("ext/effect.wgsl"));
+    let expanded = library
+        .expand_variant("ext/effect.wgsl", &["GLOW"])
+        .unwrap();
+    assert!(expanded.source.contains("struct ViewUniform"));
+    assert!(expanded.source.contains("const GLOW"));
+    library.add_source("ext/effect.wgsl", "const CHANGED: u32 = 1u;\n");
+    let expanded = library
+        .expand_variant("ext/effect.wgsl", &["GLOW"])
+        .unwrap();
+    assert!(expanded.source.contains("CHANGED"));
+    assert!(!expanded.source.contains("ViewUniform"));
+}

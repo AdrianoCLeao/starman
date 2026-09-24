@@ -330,9 +330,9 @@ pub fn evaluate_pose(
 mod tests {
     use super::*;
     use crate::clip::{BoneTrack, ClipBinding};
-    use crate::curve::Curve;
     use crate::skeleton::Bone;
     use crate::state_machine::ResolvedClip;
+    use engine_math::curve::Curve;
     use engine_math::Mat4;
 
     fn skeleton() -> Skeleton {

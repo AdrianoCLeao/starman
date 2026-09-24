@@ -15,5 +15,6 @@ engine-render = { path = "../engine-render" }
 engine-input = { path = "../engine-input" }
 engine-physics = { path = "../engine-physics" }
 engine-animation = { path = "../engine-animation" }
+engine-vfx = { path = "../engine-vfx" }
 engine-math = { path = "../engine-math" }
 log.workspace = true

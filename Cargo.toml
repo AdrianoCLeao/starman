@@ -9,6 +9,7 @@ members = [
     "crates/engine-render",
     "crates/engine-physics",
     "crates/engine-animation",
+    "crates/engine-vfx",
     "crates/engine-audio",
     "crates/engine-input",
     "crates/engine-assets",
