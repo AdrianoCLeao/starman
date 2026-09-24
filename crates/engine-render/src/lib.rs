@@ -24,17 +24,25 @@ mod gpu_resources;
 #[cfg(test)]
 mod gpu_resources_tests;
 mod graph;
+mod ibl;
 mod lights;
+mod lod;
+mod pbr;
 mod picking;
 mod pipelines;
+mod post;
+mod probes;
+mod quality;
 mod scene_adapter;
 #[cfg(test)]
 mod scene_adapter_tests;
 mod shader;
+mod shadows;
 mod stress;
 mod surface;
 #[cfg(test)]
 mod surface_tests;
+mod taa;
 mod texture_upload;
 #[cfg(test)]
 mod texture_upload_tests;
@@ -52,8 +60,12 @@ pub use frame::{
 };
 pub use graph::{PassId, RenderGraph};
 pub use lights::{DirectionalLight, PointLight, SpotLight};
+pub use lod::LodGroup;
 pub use picking::PickResult;
+pub use probes::ReflectionProbe;
+pub use quality::{QualityPreset, QualitySettings};
 pub use scene_adapter::RenderSceneAdapter;
+pub use shadows::{cascade_split_depths, select_local_shadow_casters};
 pub use stress::{spawn_stress_scene, StressSceneConfig};
 
 #[derive(Component, Clone, Copy, Debug)]
@@ -246,12 +258,17 @@ pub(crate) struct Pipeline3d {
     pub(crate) camera_bind_group: wgpu::BindGroup,
     pub(crate) model_layout: wgpu::BindGroupLayout,
     pub(crate) material_layout: wgpu::BindGroupLayout,
+    #[allow(dead_code)]
+    pub(crate) light_layout: wgpu::BindGroupLayout,
+    pub(crate) lights_buffer: wgpu::Buffer,
+    pub(crate) light_count_buffer: wgpu::Buffer,
+    pub(crate) light_bind_group: wgpu::BindGroup,
 }
 
 pub(crate) struct Pipeline2d {
     pub(crate) pipeline: wgpu::RenderPipeline,
-    camera_buffer: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
+    pub(crate) camera_buffer: wgpu::Buffer,
+    pub(crate) camera_bind_group: wgpu::BindGroup,
     pub(crate) sprite_layout: wgpu::BindGroupLayout,
     pub(crate) quad_vertex_buffer: wgpu::Buffer,
     pub(crate) quad_index_buffer: wgpu::Buffer,
@@ -299,6 +316,8 @@ pub(crate) struct ModelUniform {
 pub(crate) struct MaterialUniform {
     pub(crate) base_color: [f32; 4],
     pub(crate) metallic_roughness: [f32; 4],
+    pub(crate) emissive: [f32; 4],
+    pub(crate) flags: [u32; 4],
 }
 
 #[repr(C)]

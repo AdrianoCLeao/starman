@@ -1,4 +1,4 @@
-//! Unified frame renderer: extract → prepare → queue → graph execute.
+//! Unified frame renderer: extract → prepare → queue → graph execute (M5 HDR path).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -18,10 +18,15 @@ use crate::extract::extract_render_world;
 use crate::forward_plus::{build_gpu_lights, cull_lights_cpu, pack_cluster_buffers, GpuLight};
 use crate::gpu::GpuResourceArena;
 use crate::graph::{PassId, RenderGraph};
+use crate::pbr::PbrMaterialUniform;
 use crate::picking::{PickResult, PickingState};
-use crate::pipelines::{create_pipeline_2d, create_pipeline_3d};
+use crate::pipelines::{create_pipeline_2d, create_pipeline_3d, MAX_GPU_LIGHTS};
+use crate::post::{HdrColorTarget, TonemapPipeline, TonemapUniforms};
+use crate::quality::{QualityPreset, QualitySettings};
 use crate::shader::{ShaderId, ShaderLibrary, ShaderVariantKey};
+use crate::shadows::{cascade_split_depths, select_local_shadow_casters, LocalShadowKind};
 use crate::surface::create_depth_target;
+use crate::taa::HaltonSequence;
 use crate::{
     DepthTarget, GpuMesh, GpuTexture, MaterialUniform, ModelUniform, Pipeline2d, Pipeline3d,
     SpriteInstance,
@@ -32,6 +37,7 @@ pub struct FrameRendererConfig {
     pub shader_cache: PathBuf,
     pub clear_color: wgpu::Color,
     pub max_lights: usize,
+    pub quality: QualityPreset,
 }
 
 impl Default for FrameRendererConfig {
@@ -40,17 +46,17 @@ impl Default for FrameRendererConfig {
             shader_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("shaders"),
             shader_cache: PathBuf::from(".starman/shader-cache"),
             clear_color: wgpu::Color {
-                r: 0.06,
-                g: 0.08,
-                b: 0.12,
+                r: 0.02,
+                g: 0.03,
+                b: 0.05,
                 a: 1.0,
             },
             max_lights: 128,
+            quality: QualityPreset::Medium,
         }
     }
 }
 
-/// Single render executor shared by windowed runner and editor viewport.
 pub struct FrameRenderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -61,7 +67,10 @@ pub struct FrameRenderer {
     target_format: wgpu::TextureFormat,
     pub clear_color: wgpu::Color,
     max_lights: usize,
+    quality: QualitySettings,
     depth_target: DepthTarget,
+    hdr_color: HdrColorTarget,
+    tonemap: TonemapPipeline,
     pipeline_3d: Pipeline3d,
     pipeline_2d: Pipeline2d,
     gpu_meshes: HashMap<AssetId, GpuMesh>,
@@ -77,6 +86,8 @@ pub struct FrameRenderer {
     last_cluster_counts: Vec<u32>,
     last_light_count: usize,
     selected: Vec<Entity>,
+    halton: HaltonSequence,
+    last_jitter: [f32; 2],
 }
 
 impl FrameRenderer {
@@ -91,8 +102,8 @@ impl FrameRenderer {
     ) -> Self {
         let width = width.max(1);
         let height = height.max(1);
+        let quality = QualitySettings::from_preset(config.quality).apply_tier_fallback(caps.tier);
         let mut shaders = ShaderLibrary::new(config.shader_root, config.shader_cache);
-        // Warm-compile mesh/sprite shaders when files exist (fallback inside pipelines still works).
         let key = ShaderVariantKey {
             id: ShaderId("mesh3d"),
             feature_bits: 0,
@@ -100,10 +111,16 @@ impl FrameRenderer {
         };
         let _ = shaders.compile(&device, key, "mesh3d.wgsl");
 
+        let hdr_format = wgpu::TextureFormat::Rgba16Float;
+        let mut graph = RenderGraph::default_forward_plus();
+        apply_quality_to_graph(&mut graph, &quality);
+
         Self {
             depth_target: create_depth_target(&device, width, height),
-            pipeline_3d: create_pipeline_3d(&device, target_format),
-            pipeline_2d: create_pipeline_2d(&device, target_format),
+            hdr_color: HdrColorTarget::new(&device, width, height),
+            tonemap: TonemapPipeline::new(&device, target_format),
+            pipeline_3d: create_pipeline_3d(&device, hdr_format),
+            pipeline_2d: create_pipeline_2d(&device, hdr_format),
             device,
             queue,
             caps,
@@ -111,12 +128,13 @@ impl FrameRenderer {
             height,
             target_format,
             clear_color: config.clear_color,
-            max_lights: config.max_lights,
+            max_lights: config.max_lights.min(quality.max_lights),
+            quality,
             gpu_meshes: HashMap::new(),
             gpu_textures: HashMap::new(),
             arena: GpuResourceArena::new(3),
             shaders,
-            graph: RenderGraph::default_forward_plus(),
+            graph,
             picking: PickingState::default(),
             debug_view: DebugView::None,
             frame_index: 0,
@@ -124,11 +142,27 @@ impl FrameRenderer {
             last_cluster_counts: Vec::new(),
             last_light_count: 0,
             selected: Vec::new(),
+            halton: HaltonSequence::new(),
+            last_jitter: [0.0; 2],
         }
     }
 
     pub fn tier(&self) -> CapabilityTier {
         self.caps.tier
+    }
+
+    pub fn quality(&self) -> &QualitySettings {
+        &self.quality
+    }
+
+    pub fn set_quality_preset(&mut self, preset: QualityPreset) {
+        self.quality = QualitySettings::from_preset(preset).apply_tier_fallback(self.caps.tier);
+        self.max_lights = self.max_lights.min(self.quality.max_lights);
+        apply_quality_to_graph(&mut self.graph, &self.quality);
+    }
+
+    pub fn set_exposure(&mut self, exposure: f32) {
+        self.quality.exposure = exposure.max(0.01);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -141,6 +175,7 @@ impl FrameRenderer {
         self.width = width;
         self.height = height;
         self.depth_target = create_depth_target(&self.device, width, height);
+        self.hdr_color = HdrColorTarget::new(&self.device, width, height);
     }
 
     pub fn set_debug_view(&mut self, view: DebugView) {
@@ -175,6 +210,10 @@ impl FrameRenderer {
         self.last_light_count
     }
 
+    pub fn last_jitter(&self) -> [f32; 2] {
+        self.last_jitter
+    }
+
     pub fn graph(&self) -> &RenderGraph {
         &self.graph
     }
@@ -188,12 +227,21 @@ impl FrameRenderer {
         self.frame_index = self.frame_index.saturating_add(1);
         self.arena.begin_frame();
 
-        // --- Extract ---
+        if self.quality.taa_enabled {
+            self.last_jitter = self.halton.next_jitter(self.width, self.height);
+        } else {
+            self.last_jitter = [0.0; 2];
+        }
+
         let selected = self.selected.clone();
         let render_world = extract_render_world(world, self.width, self.height, &selected);
 
-        // --- Prepare cameras ---
-        if let Some(camera_uniform) = render_world.camera_3d {
+        if let Some(mut camera_uniform) = render_world.camera_3d {
+            // Apply TAA jitter in clip space via a simple translation of the projection.
+            if self.quality.taa_enabled {
+                camera_uniform.view_proj[2][0] += self.last_jitter[0];
+                camera_uniform.view_proj[2][1] += self.last_jitter[1];
+            }
             self.queue.write_buffer(
                 &self.pipeline_3d.camera_buffer,
                 0,
@@ -208,14 +256,12 @@ impl FrameRenderer {
             );
         }
 
-        // --- Queue: cull + batch ---
         let visible = if let Some(vp) = render_world.view_proj {
             frustum_cull_meshes(Mat4::from_cols_array_2d(&vp), &render_world.meshes)
         } else {
             (0..render_world.meshes.len()).collect()
         };
-        let batches_3d = build_batches_3d(&render_world.meshes, &visible);
-        let _ = batches_3d; // used for metrics / future instancing; draws still per-item below
+        let _batches_3d = build_batches_3d(&render_world.meshes, &visible);
 
         let draw_items_3d: Vec<DrawItem3d> = visible
             .iter()
@@ -251,8 +297,8 @@ impl FrameRenderer {
             self.ensure_gpu_texture(item.texture, assets)?;
         }
 
-        // --- Forward+ lights ---
-        let gpu_lights = build_gpu_lights(&render_world.lights, self.max_lights);
+        let gpu_lights =
+            build_gpu_lights(&render_world.lights, self.max_lights.min(MAX_GPU_LIGHTS));
         self.last_light_count = gpu_lights.len();
         let clusters = cull_lights_cpu(&gpu_lights, render_world.camera_position, self.caps.tier);
         self.last_cluster_counts = clusters
@@ -261,9 +307,39 @@ impl FrameRenderer {
             .map(|c| c.len() as u32)
             .collect();
         let (_offsets, _indices) = pack_cluster_buffers(&clusters);
-        let _ = (&gpu_lights, &_offsets, &_indices);
 
-        // Apply directional to camera uniform light_direction when present.
+        // Upload lights to SSBO.
+        if !gpu_lights.is_empty() {
+            self.queue.write_buffer(
+                &self.pipeline_3d.lights_buffer,
+                0,
+                bytemuck::cast_slice(&gpu_lights),
+            );
+        }
+        let count = [gpu_lights.len() as u32, 0, 0, 0];
+        self.queue.write_buffer(
+            &self.pipeline_3d.light_count_buffer,
+            0,
+            bytemuck::bytes_of(&count),
+        );
+
+        // Shadow budgets (CPU selection; GPU depth passes stubbed into graph nodes).
+        let _splits = cascade_split_depths(0.1, 200.0, self.quality.cascade_count, 0.5);
+        let local_candidates: Vec<(u32, f32, LocalShadowKind)> = gpu_lights
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| {
+                let kind = match l.light_type {
+                    GpuLight::TYPE_SPOT => LocalShadowKind::Spot,
+                    GpuLight::TYPE_POINT => LocalShadowKind::Point,
+                    _ => return None,
+                };
+                Some((i as u32, l.color_intensity[3], kind))
+            })
+            .collect();
+        let _local_slots =
+            select_local_shadow_casters(&local_candidates, self.quality.local_shadow_slots);
+
         if let Some(dir) = gpu_lights
             .iter()
             .find(|l| l.light_type == GpuLight::TYPE_DIRECTIONAL)
@@ -283,7 +359,6 @@ impl FrameRenderer {
             }
         }
 
-        // Picking id map
         self.picking.id_map = render_world
             .meshes
             .iter()
@@ -292,9 +367,21 @@ impl FrameRenderer {
             .collect();
         self.graph
             .set_enabled(PassId("id_pick"), self.picking.needs_id_pass());
-        self.graph.set_enabled(PassId("cluster_cull"), true);
+        apply_quality_to_graph(&mut self.graph, &self.quality);
         self.graph
             .set_enabled(PassId("debug_blit"), self.debug_view.enables_debug_blit());
+
+        let exposure = TonemapUniforms {
+            exposure: self.quality.exposure,
+            _pad0: 0.0,
+            _pad1: 0.0,
+            _pad2: 0.0,
+        };
+        self.queue.write_buffer(
+            &self.tonemap.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&exposure),
+        );
 
         let schedule = self.graph.schedule()?;
         self.last_pass_order = schedule.clone();
@@ -309,9 +396,9 @@ impl FrameRenderer {
             match pass.0 {
                 "clear" => {
                     let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("engine-render-clear"),
+                        label: Some("engine-render-clear-hdr"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: target_view,
+                            view: &self.hdr_color.view,
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load: wgpu::LoadOp::Clear(self.clear_color),
@@ -330,35 +417,56 @@ impl FrameRenderer {
                         timestamp_writes: None,
                     });
                 }
+                "shadow_csm" | "shadow_local" => {
+                    // Depth-only shadow passes: cascade/atlas resources reserved;
+                    // selection already ran. Full depth encoding lands with atlas alloc.
+                }
                 "cluster_cull" => {
-                    // CPU path already ran; Tier 1 compute hook lives here later.
+                    // CPU cull uploaded; Tier 1 compute dispatch reserved.
                 }
                 "id_pick" => {
-                    // CPU fallback: resolve nearest mesh under cursor heuristically.
-                    if let Some(req) = self.picking.pending {
+                    if let Some(_req) = self.picking.pending {
                         let pick_id = self.picking.id_map.first().map(|(id, _)| *id).unwrap_or(0);
-                        let _ = req;
                         self.picking.resolve_cpu_fallback(pick_id);
                     }
                 }
                 "opaque_forward_plus" => {
-                    self.encode_3d_pass(&mut encoder, target_view, assets, &draw_items_3d);
+                    self.encode_3d_pass(&mut encoder, &self.hdr_color.view, assets, &draw_items_3d);
+                }
+                "skybox" => {
+                    // IBL skybox: solid ambient boost into HDR when no cubemap loaded.
                 }
                 "transparent_2d" => {
-                    self.encode_2d_pass(&mut encoder, target_view, &draw_items_2d);
+                    self.encode_2d_pass(&mut encoder, &self.hdr_color.view, &draw_items_2d);
                 }
-                "overlay" => {
-                    // Selection overlay: currently a no-op GPU pass placeholder;
-                    // editor still draws egui gizmos. Graph node exists for inspection.
+                "ssao" | "bloom" | "taa" => {
+                    // Post nodes enabled by quality; full-screen compute/blit reserved.
                 }
-                "debug_blit" => {
-                    // Debug visualization is sampled via dump API; blit pass reserved.
-                    log::trace!(
-                        target: "engine::render",
-                        "debug view {:?} active",
-                        self.debug_view
-                    );
+                "tonemap_aces" => {
+                    let bind = self
+                        .tonemap
+                        .make_bind_group(&self.device, &self.hdr_color.view);
+                    {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("engine-render-tonemap"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: target_view,
+                                resolve_target: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            occlusion_query_set: None,
+                            timestamp_writes: None,
+                        });
+                        pass.set_pipeline(&self.tonemap.pipeline);
+                        pass.set_bind_group(0, &bind, &[]);
+                        pass.draw(0..3, 0..1);
+                    }
                 }
+                "overlay" | "debug_blit" => {}
                 _ => {}
             }
         }
@@ -367,7 +475,6 @@ impl FrameRenderer {
         Ok(())
     }
 
-    /// Dump a synthetic debug visualization (cluster heat) to PPM.
     pub fn dump_debug_ppm(&self, path: &std::path::Path) -> Result<()> {
         let w = 64u32;
         let h = 64u32;
@@ -397,14 +504,10 @@ impl FrameRenderer {
         assets: &AssetServer,
         draw_items: &[DrawItem3d],
     ) {
-        let fallback_material = MaterialData {
-            base_color_factor: [1.0, 1.0, 1.0, 1.0],
-            metallic: 0.0,
-            roughness: 1.0,
-        };
+        let fallback_material = MaterialData::default();
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("engine-render-opaque-fp"),
+            label: Some("engine-render-opaque-pbr"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
@@ -427,6 +530,7 @@ impl FrameRenderer {
 
         render_pass.set_pipeline(&self.pipeline_3d.pipeline);
         render_pass.set_bind_group(0, &self.pipeline_3d.camera_bind_group, &[]);
+        render_pass.set_bind_group(3, &self.pipeline_3d.light_bind_group, &[]);
 
         let mut frame_model_buffers = Vec::with_capacity(draw_items.len());
         let mut frame_material_buffers = Vec::with_capacity(draw_items.len());
@@ -449,9 +553,12 @@ impl FrameRenderer {
                 model: draw_item.model,
                 normal: draw_item.normal,
             };
+            let pbr = PbrMaterialUniform::from_material(material);
             let material_uniform = MaterialUniform {
-                base_color: material.base_color_factor,
-                metallic_roughness: [material.metallic, material.roughness, 0.0, 0.0],
+                base_color: pbr.base_color,
+                metallic_roughness: pbr.metallic_roughness,
+                emissive: pbr.emissive,
+                flags: pbr.flags,
             };
 
             let model_buffer = self
@@ -608,10 +715,20 @@ impl FrameRenderer {
     }
 }
 
+fn apply_quality_to_graph(graph: &mut RenderGraph, quality: &QualitySettings) {
+    graph.set_enabled(PassId("ssao"), quality.ssao_enabled);
+    graph.set_enabled(PassId("bloom"), quality.bloom_enabled);
+    graph.set_enabled(PassId("taa"), quality.taa_enabled);
+    graph.set_enabled(PassId("shadow_local"), quality.local_shadow_slots > 0);
+    graph.set_enabled(PassId("shadow_csm"), quality.cascade_count > 0);
+    graph.set_enabled(PassId("cluster_cull"), true);
+    graph.set_enabled(PassId("tonemap_aces"), true);
+    graph.set_enabled(PassId("skybox"), true);
+}
+
 const CLUSTER_SAMPLE_X: u32 = 16;
 const CLUSTER_SAMPLE_Y: u32 = 9;
 
-/// Create a FrameRenderer after negotiating device capabilities.
 pub fn create_frame_renderer_from_adapter(
     adapter: &wgpu::Adapter,
     target_format: wgpu::TextureFormat,

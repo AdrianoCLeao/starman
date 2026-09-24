@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use wgpu::util::DeviceExt;
 
+use crate::forward_plus::GpuLight;
 use crate::shader::ShaderLibrary;
 
 fn load_wgsl(relative: &str) -> String {
@@ -15,9 +16,11 @@ fn load_wgsl(relative: &str) -> String {
     })
 }
 
+pub(crate) const MAX_GPU_LIGHTS: usize = 128;
+
 pub(crate) fn create_pipeline_3d(
     device: &wgpu::Device,
-    surface_format: wgpu::TextureFormat,
+    color_format: wgpu::TextureFormat,
 ) -> crate::Pipeline3d {
     let source = load_wgsl("mesh3d.wgsl");
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -85,6 +88,32 @@ pub(crate) fn create_pipeline_3d(
         ],
     });
 
+    let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("engine-render-light-layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
     let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("engine-render-camera3d-uniform"),
         size: size_of::<crate::Camera3dUniform>() as u64,
@@ -101,9 +130,40 @@ pub(crate) fn create_pipeline_3d(
         }],
     });
 
+    let lights_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("engine-render-lights-ssbo"),
+        size: (size_of::<GpuLight>() * MAX_GPU_LIGHTS) as u64,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let light_count_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("engine-render-light-count"),
+        contents: bytemuck::bytes_of(&[0u32, 0, 0, 0]),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+    let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("engine-render-light-bind-group"),
+        layout: &light_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: lights_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: light_count_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("engine-render-mesh3d-pipeline-layout"),
-        bind_group_layouts: &[&camera_layout, &model_layout, &material_layout],
+        bind_group_layouts: &[
+            &camera_layout,
+            &model_layout,
+            &material_layout,
+            &light_layout,
+        ],
         push_constant_ranges: &[],
     });
 
@@ -138,8 +198,8 @@ pub(crate) fn create_pipeline_3d(
             entry_point: Some("fs_main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             targets: &[Some(wgpu::ColorTargetState {
-                format: surface_format,
-                blend: None,
+                format: color_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),
@@ -153,12 +213,16 @@ pub(crate) fn create_pipeline_3d(
         camera_bind_group,
         model_layout,
         material_layout,
+        light_layout,
+        lights_buffer,
+        light_count_buffer,
+        light_bind_group,
     }
 }
 
 pub(crate) fn create_pipeline_2d(
     device: &wgpu::Device,
-    surface_format: wgpu::TextureFormat,
+    color_format: wgpu::TextureFormat,
 ) -> crate::Pipeline2d {
     let source = load_wgsl("sprite2d.wgsl");
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -283,7 +347,7 @@ pub(crate) fn create_pipeline_2d(
             entry_point: Some("fs_main"),
             compilation_options: wgpu::PipelineCompilationOptions::default(),
             targets: &[Some(wgpu::ColorTargetState {
-                format: surface_format,
+                format: color_format,
                 blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                 write_mask: wgpu::ColorWrites::ALL,
             })],

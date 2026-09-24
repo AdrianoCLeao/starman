@@ -4,7 +4,8 @@ Date: 2026-09-23
 
 ## Status
 
-Accepted (supersedes the forward-looking parts of ADR 0004)
+Accepted (supersedes the forward-looking parts of ADR 0004). Extended by
+[ADR 0010](0010-pbr-hdr-visual-v1.md) for PBR/HDR/shadows/post.
 
 ## Context
 

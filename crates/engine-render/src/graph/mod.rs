@@ -29,7 +29,6 @@ pub struct PassNode {
     pub id: PassId,
     pub reads: Vec<ResourceId>,
     pub writes: Vec<ResourceId>,
-    /// Explicit ordering edges (runs after these passes).
     pub after: Vec<PassId>,
     pub enabled: bool,
 }
@@ -67,7 +66,6 @@ impl RenderGraph {
         self.resources.values()
     }
 
-    /// Topological order from explicit `after` edges (+ declaration tie-break).
     pub fn schedule(&self) -> Result<Vec<PassId>> {
         let enabled: Vec<&PassNode> = self.passes.iter().filter(|p| p.enabled).collect();
         let ids: HashSet<PassId> = enabled.iter().map(|p| p.id).collect();
@@ -124,72 +122,59 @@ impl RenderGraph {
         Ok(scheduled)
     }
 
-    /// Default M4 Forward+ graph topology.
+    /// Default M5 Forward+ / HDR graph.
     pub fn default_forward_plus() -> Self {
         let mut graph = Self::new();
         for (id, kind) in [
+            (ResourceId("hdr_color"), ResourceKind::ColorTarget),
             (ResourceId("color"), ResourceKind::ColorTarget),
             (ResourceId("depth"), ResourceKind::Depth),
             (ResourceId("id_buffer"), ResourceKind::Texture),
             (ResourceId("lights"), ResourceKind::Buffer),
             (ResourceId("clusters"), ResourceKind::Buffer),
+            (ResourceId("shadow_csm"), ResourceKind::Texture),
+            (ResourceId("shadow_local"), ResourceKind::Texture),
+            (ResourceId("velocity"), ResourceKind::Texture),
+            (ResourceId("history"), ResourceKind::Texture),
         ] {
             graph.add_resource(GraphResourceDecl { id, kind });
         }
 
-        graph.add_pass(PassNode {
-            id: PassId("clear"),
-            reads: vec![],
-            writes: vec![ResourceId("color"), ResourceId("depth")],
-            after: vec![],
-            enabled: true,
-        });
-        graph.add_pass(PassNode {
-            id: PassId("id_pick"),
-            reads: vec![ResourceId("depth")],
-            writes: vec![ResourceId("id_buffer")],
-            after: vec![PassId("clear")],
-            enabled: false,
-        });
-        graph.add_pass(PassNode {
-            id: PassId("cluster_cull"),
-            reads: vec![ResourceId("lights")],
-            writes: vec![ResourceId("clusters")],
-            after: vec![PassId("clear")],
-            enabled: true,
-        });
-        graph.add_pass(PassNode {
-            id: PassId("opaque_forward_plus"),
-            reads: vec![ResourceId("clusters"), ResourceId("lights")],
-            writes: vec![ResourceId("color"), ResourceId("depth")],
-            after: vec![PassId("cluster_cull")],
-            enabled: true,
-        });
-        graph.add_pass(PassNode {
-            id: PassId("transparent_2d"),
-            reads: vec![ResourceId("color")],
-            writes: vec![ResourceId("color")],
-            after: vec![PassId("opaque_forward_plus")],
-            enabled: true,
-        });
-        graph.add_pass(PassNode {
-            id: PassId("overlay"),
-            reads: vec![ResourceId("color"), ResourceId("depth")],
-            writes: vec![ResourceId("color")],
-            after: vec![PassId("transparent_2d")],
-            enabled: true,
-        });
-        graph.add_pass(PassNode {
-            id: PassId("debug_blit"),
-            reads: vec![
-                ResourceId("color"),
-                ResourceId("depth"),
-                ResourceId("clusters"),
-            ],
-            writes: vec![ResourceId("color")],
-            after: vec![PassId("overlay")],
-            enabled: false,
-        });
+        let add =
+            |graph: &mut RenderGraph, id: &'static str, after: &[&'static str], enabled: bool| {
+                graph.add_pass(PassNode {
+                    id: PassId(id),
+                    reads: vec![],
+                    writes: vec![],
+                    after: after.iter().map(|p| PassId(p)).collect(),
+                    enabled,
+                });
+            };
+
+        add(&mut graph, "clear", &[], true);
+        add(&mut graph, "shadow_csm", &["clear"], true);
+        add(&mut graph, "shadow_local", &["clear"], true);
+        add(&mut graph, "id_pick", &["clear"], false);
+        add(&mut graph, "cluster_cull", &["clear"], true);
+        add(
+            &mut graph,
+            "opaque_forward_plus",
+            &["cluster_cull", "shadow_csm", "shadow_local"],
+            true,
+        );
+        add(&mut graph, "skybox", &["opaque_forward_plus"], true);
+        add(&mut graph, "transparent_2d", &["skybox"], true);
+        add(&mut graph, "ssao", &["transparent_2d"], false);
+        add(&mut graph, "bloom", &["ssao", "transparent_2d"], false);
+        add(&mut graph, "taa", &["bloom", "transparent_2d"], false);
+        add(
+            &mut graph,
+            "tonemap_aces",
+            &["taa", "bloom", "transparent_2d", "ssao"],
+            true,
+        );
+        add(&mut graph, "overlay", &["tonemap_aces"], true);
+        add(&mut graph, "debug_blit", &["overlay"], false);
         graph
     }
 }
@@ -203,11 +188,11 @@ mod tests {
         let graph = RenderGraph::default_forward_plus();
         let order = graph.schedule().unwrap();
         let clear = order.iter().position(|p| *p == PassId("clear")).unwrap();
-        let opaque = order
+        let tonemap = order
             .iter()
-            .position(|p| *p == PassId("opaque_forward_plus"))
+            .position(|p| *p == PassId("tonemap_aces"))
             .unwrap();
-        assert!(clear < opaque);
+        assert!(clear < tonemap);
     }
 
     #[test]
