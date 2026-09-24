@@ -12,7 +12,7 @@ engine-audio = { path = "../engine-audio" }
 engine-core = { path = "../engine-core" }
 engine-input = { path = "../engine-input" }
 engine-lua = { path = "../engine-lua" }
-engine-physics = { path = "../engine-physics" }
+engine-runtime = { path = "../engine-runtime" }
 engine-project = { path = "../engine-project" }
 engine-reflect = { path = "../engine-reflect" }
 engine-render = { path = "../engine-render" }

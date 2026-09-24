@@ -19,17 +19,13 @@ use engine_assets::{
     SceneDeserializer, SceneFile, SceneInstance, SceneSerializer, TextureHandle,
 };
 use engine_core::{
-    create_world, register_core_reflection_types, Camera2d, Camera3d, Children, EditorEntityBundle,
-    EngineError, EntityName, GlobalTransform, Parent, PrimaryCamera, RenderLayer2D, RenderLayer3D,
-    Result, SpatialBundle, Transform, Visible,
+    Camera2d, Camera3d, Children, EditorEntityBundle, EngineError, EntityName, GlobalTransform,
+    Parent, PrimaryCamera, RenderLayer2D, RenderLayer3D, Result, SpatialBundle, Transform, Visible,
 };
 use engine_diagnostics::{DiagnosticEvent, DiagnosticLevel};
 use engine_math::glam::{Affine3A, Quat, Vec3};
 use engine_math::Mat4;
-use engine_physics::{
-    raycast, register_physics_reflection_types, ColliderEntityMap3D, ColliderShape3D,
-    PhysicsWorld3D,
-};
+use engine_physics::{raycast, ColliderEntityMap3D, ColliderShape3D, PhysicsWorld3D};
 use engine_project::Project;
 use engine_reflect::{ComponentRegistry, ReflectMetadataRegistry, ReflectTypeRegistry};
 use engine_render::{
@@ -6366,27 +6362,9 @@ fn project_world_to_viewport(
     Some(egui::pos2(screen_x, screen_y))
 }
 
+/// The authoring world carries every standard subsystem's resources and
+/// reflected types (same plugin set as the game runtime), so any component
+/// a game can use is inspectable and serializable in the editor.
 fn build_editor_world() -> World {
-    let mut world = create_world();
-
-    let mut type_registry = ReflectTypeRegistry::default();
-    let mut component_registry = ComponentRegistry::default();
-    let mut metadata_registry = ReflectMetadataRegistry::default();
-
-    register_core_reflection_types(
-        &mut type_registry,
-        &mut component_registry,
-        &mut metadata_registry,
-    );
-    register_physics_reflection_types(
-        &mut type_registry,
-        &mut component_registry,
-        &mut metadata_registry,
-    );
-
-    world.insert_resource(type_registry);
-    world.insert_resource(component_registry);
-    world.insert_resource(metadata_registry);
-
-    world
+    engine_runtime::build_runtime(&engine_runtime::RuntimeOptions::default()).world
 }

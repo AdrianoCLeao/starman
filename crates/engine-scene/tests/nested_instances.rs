@@ -44,7 +44,7 @@ fn scratch_dir(prefix: &str) -> PathBuf {
     dir
 }
 
-fn write_scene(path: &PathBuf, scene: &SceneFile) {
+fn write_scene(path: &std::path::Path, scene: &SceneFile) {
     scene.write_to(path).expect("write scene");
 }
 

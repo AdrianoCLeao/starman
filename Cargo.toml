@@ -16,6 +16,7 @@ members = [
     "crates/starman-plugin-sdk",
     "crates/engine-lua",
     "crates/engine-project",
+    "crates/engine-runtime",
     "crates/engine-runner",
     "crates/starman-cli",
     "crates/engine-math",

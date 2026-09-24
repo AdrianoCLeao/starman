@@ -321,18 +321,14 @@ pub(crate) fn load_material_payload(path: &Path) -> Result<MaterialData> {
             ] {
                 let k = ron::Value::String(key.into());
                 if let Some(ron::Value::String(s)) = map.remove(&k) {
-                    map.insert(
-                        k,
-                        ron::Value::Option(Some(Box::new(ron::Value::String(s)))),
-                    );
+                    map.insert(k, ron::Value::Option(Some(Box::new(ron::Value::String(s)))));
                 }
             }
-            let rewritten = ron::to_string(&ron::Value::Map(map)).map_err(|e| {
-                EngineError::AssetLoad {
+            let rewritten =
+                ron::to_string(&ron::Value::Map(map)).map_err(|e| EngineError::AssetLoad {
                     path: path.display().to_string(),
                     reason: e.to_string(),
-                }
-            })?;
+                })?;
             ron::from_str(&rewritten).map_err(|error| EngineError::AssetLoad {
                 path: path.display().to_string(),
                 reason: format!("failed to parse material: {error}"),

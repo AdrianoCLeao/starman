@@ -1797,6 +1797,7 @@ dependencies = [
  "engine-project",
  "engine-reflect",
  "engine-render",
+ "engine-runtime",
  "engine-scene",
  "gltf",
  "image",
@@ -1933,11 +1934,22 @@ dependencies = [
  "engine-core",
  "engine-input",
  "engine-lua",
- "engine-physics",
  "engine-project",
  "engine-reflect",
  "engine-render",
+ "engine-runtime",
  "engine-scene",
+ "log",
+]
+
+[[package]]
+name = "engine-runtime"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "engine-core",
+ "engine-input",
+ "engine-physics",
  "log",
 ]
 
@@ -4716,6 +4728,7 @@ dependencies = [
  "engine-project",
  "engine-reflect",
  "engine-render",
+ "engine-runtime",
  "gilrs",
  "log",
  "winit",

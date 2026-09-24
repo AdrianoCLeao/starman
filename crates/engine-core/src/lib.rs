@@ -1,8 +1,10 @@
 pub mod camera;
 pub mod error;
 pub mod hardening;
+pub mod hierarchy;
 pub mod id;
 pub mod reflect;
+pub mod runtime;
 pub mod schedule;
 pub mod tag;
 pub mod time;
@@ -12,9 +14,17 @@ pub mod window;
 pub use camera::{sync_camera_aspect_from_window, Camera2d, Camera3d, PrimaryCamera, WindowSize};
 pub use error::{EngineError, Result};
 pub use hardening::HardeningConfig;
+pub use hierarchy::{despawn_recursive, set_parent, HierarchyCommandsExt};
 pub use id::{EntityId, PersistentId, ProjectId, SourceAssetId, SubAssetId};
 pub use reflect::register_core_reflection_types;
-pub use schedule::{EngineSchedules, FixedUpdate, PreRender, Startup, Update};
+pub use runtime::{
+    FrameHooks, GameClock, GameRuntime, NoHooks, RuntimeFrame, RuntimePlugin,
+    MAX_FIXED_STEPS_PER_FRAME,
+};
+pub use schedule::{
+    EngineSchedules, FixedSet, FixedUpdate, PreRender, PreRenderSet, ScheduleKind, Startup, Update,
+    UpdateSet,
+};
 pub use tag::{Hidden, PhysicsControlled, RenderLayer2D, RenderLayer3D, Visible};
 pub use time::{
     FixedStepIterator, Time, TimeConfig, DEFAULT_FIXED_TIMESTEP_SECONDS,
@@ -98,10 +108,14 @@ pub struct FrameStats {
 
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct FrameTime {
+    /// Scaled game delta (0 while [`GameClock::paused`]).
     pub delta_seconds: f32,
+    /// Unscaled wall-clock delta (UI, menus, audio fades).
+    pub real_delta_seconds: f32,
     pub fixed_delta_seconds: f32,
     pub alpha: f32,
     pub elapsed_seconds: f64,
+    pub real_elapsed_seconds: f64,
     pub frame_count: u64,
 }
 
@@ -109,9 +123,11 @@ impl Default for FrameTime {
     fn default() -> Self {
         Self {
             delta_seconds: 0.0,
+            real_delta_seconds: 0.0,
             fixed_delta_seconds: DEFAULT_FIXED_TIMESTEP_SECONDS as f32,
             alpha: 0.0,
             elapsed_seconds: 0.0,
+            real_elapsed_seconds: 0.0,
             frame_count: 0,
         }
     }
@@ -161,12 +177,44 @@ pub trait Plugin<M: EngineModules> {
 }
 
 pub struct Engine<M: EngineModules> {
-    pub world: World,
+    pub runtime: GameRuntime,
     pub time: Time,
     pub modules: M,
     pub config: EngineConfig,
-    schedules: EngineSchedules,
-    startup_completed: bool,
+}
+
+impl<M: EngineModules> std::ops::Deref for Engine<M> {
+    type Target = GameRuntime;
+
+    fn deref(&self) -> &GameRuntime {
+        &self.runtime
+    }
+}
+
+impl<M: EngineModules> std::ops::DerefMut for Engine<M> {
+    fn deref_mut(&mut self) -> &mut GameRuntime {
+        &mut self.runtime
+    }
+}
+
+struct ModuleHooks<'a, M: EngineModules>(&'a mut M);
+
+impl<M: EngineModules> FrameHooks for ModuleHooks<'_, M> {
+    fn begin_frame(&mut self, world: &mut World) -> Result<()> {
+        self.0.flush_input(world)
+    }
+
+    fn after_fixed(&mut self, _world: &mut World, fixed_dt: f32) -> Result<()> {
+        self.0.fixed_update(fixed_dt)
+    }
+
+    fn after_update(&mut self, _world: &mut World, dt: f32) -> Result<()> {
+        self.0.update(dt)
+    }
+
+    fn render(&mut self, world: &mut World, alpha: f32) -> Result<()> {
+        self.0.render(world, alpha)
+    }
 }
 
 impl<M: EngineModules> Engine<M> {
@@ -174,36 +222,15 @@ impl<M: EngineModules> Engine<M> {
         config.validate()?;
 
         let window_size = WindowSize::new(config.window.width, config.window.height);
+        let mut runtime = GameRuntime::with_fixed_timestep(config.time.fixed_timestep_seconds);
+        runtime.insert_resource(window_size);
 
-        let mut engine = Self {
-            world: create_world(),
+        Ok(Self {
+            runtime,
             time: Time::with_config(config.time),
             modules,
             config,
-            schedules: EngineSchedules::new(),
-            startup_completed: false,
-        };
-
-        let mut reflect_type_registry = engine_reflect::ReflectTypeRegistry::default();
-        let mut component_registry = engine_reflect::ComponentRegistry::default();
-        let mut metadata_registry = engine_reflect::ReflectMetadataRegistry::default();
-        register_core_reflection_types(
-            &mut reflect_type_registry,
-            &mut component_registry,
-            &mut metadata_registry,
-        );
-
-        engine
-            .insert_resource(reflect_type_registry)
-            .insert_resource(component_registry)
-            .insert_resource(metadata_registry)
-            .insert_resource(window_size)
-            .insert_resource(FrameTime::default())
-            .insert_resource(HardeningConfig::default())
-            .add_pre_render_systems(propagate_transforms)
-            .add_pre_render_systems(sync_camera_aspect_from_window);
-
-        Ok(engine)
+        })
     }
 
     pub fn add_plugin<P: Plugin<M>>(&mut self, plugin: P) -> &mut Self {
@@ -211,8 +238,14 @@ impl<M: EngineModules> Engine<M> {
         self
     }
 
+    /// Installs a [`RuntimePlugin`] into the underlying runtime.
+    pub fn add_runtime_plugin<P: RuntimePlugin>(&mut self, plugin: P) -> &mut Self {
+        self.runtime.add_plugin(plugin);
+        self
+    }
+
     pub fn insert_resource<R: Resource>(&mut self, resource: R) -> &mut Self {
-        self.world.insert_resource(resource);
+        self.runtime.insert_resource(resource);
         self
     }
 
@@ -220,7 +253,7 @@ impl<M: EngineModules> Engine<M> {
         &mut self,
         systems: impl IntoSystemConfigs<Marker>,
     ) -> &mut Self {
-        self.schedules.startup.add_systems(systems);
+        self.runtime.add_systems(ScheduleKind::Startup, systems);
         self
     }
 
@@ -228,7 +261,7 @@ impl<M: EngineModules> Engine<M> {
         &mut self,
         systems: impl IntoSystemConfigs<Marker>,
     ) -> &mut Self {
-        self.schedules.fixed_update.add_systems(systems);
+        self.runtime.add_systems(ScheduleKind::FixedUpdate, systems);
         self
     }
 
@@ -236,7 +269,7 @@ impl<M: EngineModules> Engine<M> {
         &mut self,
         systems: impl IntoSystemConfigs<Marker>,
     ) -> &mut Self {
-        self.schedules.update.add_systems(systems);
+        self.runtime.add_systems(ScheduleKind::Update, systems);
         self
     }
 
@@ -244,7 +277,7 @@ impl<M: EngineModules> Engine<M> {
         &mut self,
         systems: impl IntoSystemConfigs<Marker>,
     ) -> &mut Self {
-        self.schedules.pre_render.add_systems(systems);
+        self.runtime.add_systems(ScheduleKind::PreRender, systems);
         self
     }
 
@@ -259,7 +292,7 @@ impl<M: EngineModules> Engine<M> {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) -> Result<()> {
-        self.insert_resource(WindowSize::new(width, height));
+        self.runtime.insert_resource(WindowSize::new(width, height));
         self.modules.resized(width, height)
     }
 
@@ -298,33 +331,9 @@ impl<M: EngineModules> Engine<M> {
     }
 
     fn run_frame(&mut self) -> Result<FrameStats> {
-        self.world.insert_resource(FrameTime {
-            delta_seconds: self.time.delta_seconds(),
-            fixed_delta_seconds: self.time.fixed_delta_seconds(),
-            alpha: self.time.alpha(),
-            elapsed_seconds: self.time.elapsed_seconds(),
-            frame_count: self.time.frame_count(),
-        });
-
-        if !self.startup_completed {
-            self.schedules.startup.run(&mut self.world);
-            self.startup_completed = true;
-        }
-
-        self.modules.flush_input(&mut self.world)?;
-
-        for fixed_dt in self.time.fixed_steps() {
-            self.schedules.fixed_update.run(&mut self.world);
-            self.modules.fixed_update(fixed_dt)?;
-        }
-
-        self.schedules.update.run(&mut self.world);
-        self.modules.update(self.time.delta_seconds())?;
-
-        self.schedules.pre_render.run(&mut self.world);
-        let alpha = self.time.alpha();
-        self.modules.render(&mut self.world, alpha)?;
-
+        let delta = self.time.delta_seconds();
+        let mut hooks = ModuleHooks(&mut self.modules);
+        self.runtime.run_frame(delta, &mut hooks)?;
         Ok(self.frame_stats())
     }
 }

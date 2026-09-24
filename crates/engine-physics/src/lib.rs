@@ -1,5 +1,6 @@
 pub mod components;
 pub mod mapping;
+pub mod plugin;
 pub mod query;
 pub mod reflect;
 pub mod systems;
@@ -10,6 +11,7 @@ pub use components::{
     RigidBodyType,
 };
 pub use mapping::{ColliderEntityMap3D, PhysicsEntityHandles3D};
+pub use plugin::PhysicsPlugin;
 pub use query::{raycast, RaycastHit};
 pub use reflect::register_physics_reflection_types;
 pub use systems::{

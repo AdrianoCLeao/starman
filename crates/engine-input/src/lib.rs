@@ -484,3 +484,18 @@ pub fn module_name() -> &'static str {
 
 #[cfg(test)]
 mod tests;
+
+/// Installs the raw [`InputState`] resource into a runtime. The OS event
+/// pump ([`InputModule`]) stays with the windowed host.
+#[derive(Default)]
+pub struct InputPlugin;
+
+impl engine_core::RuntimePlugin for InputPlugin {
+    fn name(&self) -> &'static str {
+        "engine::input"
+    }
+
+    fn build(&self, runtime: &mut engine_core::GameRuntime) {
+        runtime.init_resource::<InputState>();
+    }
+}

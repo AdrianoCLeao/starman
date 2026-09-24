@@ -1,0 +1,14 @@
+[package]
+name = "engine-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Aggregates Starman runtime plugins into the shared gameplay runtime"
+
+[dependencies]
+bevy_ecs.workspace = true
+engine-core = { path = "../engine-core" }
+engine-input = { path = "../engine-input" }
+engine-physics = { path = "../engine-physics" }
+log.workspace = true

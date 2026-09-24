@@ -13,26 +13,17 @@ use std::path::Path;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 
-use bevy_ecs::prelude::Res;
-use bevy_ecs::schedule::IntoSystemConfigs;
-use bevy_ecs::system::Resource;
 use bevy_ecs::world::World;
 use engine_assets::{AssetDatabase, AssetModule, AssetServer, SceneDeserializer};
 use engine_audio::AudioModule;
 use engine_core::{
-    Engine, EngineConfig, EngineError, EngineModules, HardeningConfig, Result, Window,
-    WindowConfig, WindowEvent,
+    Engine, EngineConfig, EngineError, EngineModules, FrameTime, GameClock, HardeningConfig,
+    Result, Window, WindowConfig, WindowEvent,
 };
 use engine_input::{InputModule, InputState};
 use engine_lua::ExtensibilityHost;
-use engine_physics::{
-    physics_fixed_update_systems_3d, register_physics_reflection_types, ColliderEntityMap3D,
-    PhysicsEntityHandles3D, PhysicsStepConfig3D, PhysicsWorld3D,
-};
 use engine_project::Project;
-use engine_reflect::{
-    with_reflection_registries, ComponentRegistry, ReflectMetadataRegistry, ReflectTypeRegistry,
-};
+use engine_reflect::{ComponentRegistry, ReflectMetadataRegistry, ReflectTypeRegistry};
 use engine_render::{RenderModule, RenderSceneAdapter};
 use engine_scene::expand_all_instances;
 
@@ -47,15 +38,6 @@ pub enum RunnerControlCommand {
     Pause,
     Resume,
     Stop,
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default)]
-struct RunnerPlaybackState {
-    paused: bool,
-}
-
-fn runner_is_playing(state: Res<RunnerPlaybackState>) -> bool {
-    !state.paused
 }
 
 /// Options controlling how a scene is bootstrapped and (for
@@ -176,9 +158,9 @@ impl RunnerModules {
             match command {
                 RunnerControlCommand::Pause => {
                     let mut changed = false;
-                    if let Some(mut playback) = world.get_resource_mut::<RunnerPlaybackState>() {
-                        if !playback.paused {
-                            playback.paused = true;
+                    if let Some(mut clock) = world.get_resource_mut::<GameClock>() {
+                        if !clock.paused {
+                            clock.paused = true;
                             changed = true;
                         }
                     }
@@ -189,9 +171,9 @@ impl RunnerModules {
                 }
                 RunnerControlCommand::Resume => {
                     let mut changed = false;
-                    if let Some(mut playback) = world.get_resource_mut::<RunnerPlaybackState>() {
-                        if playback.paused {
-                            playback.paused = false;
+                    if let Some(mut clock) = world.get_resource_mut::<GameClock>() {
+                        if clock.paused {
+                            clock.paused = false;
                             changed = true;
                         }
                     }
@@ -262,12 +244,12 @@ impl EngineModules for RunnerModules {
 
         self.process_control_messages(world);
 
-        let playing = world
-            .get_resource::<RunnerPlaybackState>()
-            .map(|s| !s.paused)
-            .unwrap_or(true);
-        if playing {
-            self.tick_lua(world, 1.0 / 60.0);
+        let delta = world
+            .get_resource::<FrameTime>()
+            .map(|time| time.delta_seconds)
+            .unwrap_or(0.0);
+        if delta > 0.0 {
+            self.tick_lua(world, delta);
         }
         Ok(())
     }
@@ -387,8 +369,8 @@ pub fn load_scene_into_world(
 }
 
 fn configure_runner_world(engine: &mut Engine<RunnerModules>) {
-    let fixed_dt_seconds = engine.time.fixed_delta_seconds();
     let hardening = engine
+        .runtime
         .world
         .get_resource::<HardeningConfig>()
         .copied()
@@ -397,21 +379,7 @@ fn configure_runner_world(engine: &mut Engine<RunnerModules>) {
     engine.modules.input.configure_hardening(hardening);
     engine.modules.assets.configure_hardening(hardening);
 
-    engine
-        .insert_resource(PhysicsWorld3D::with_timestep(fixed_dt_seconds))
-        .insert_resource(PhysicsStepConfig3D::new(fixed_dt_seconds))
-        .insert_resource(ColliderEntityMap3D::default())
-        .insert_resource(PhysicsEntityHandles3D::default())
-        .insert_resource(InputState::default())
-        .insert_resource(RunnerPlaybackState::default())
-        .add_fixed_update_systems(physics_fixed_update_systems_3d().run_if(runner_is_playing));
-
-    with_reflection_registries(
-        &mut engine.world,
-        |type_registry, component_registry, metadata_registry| {
-            register_physics_reflection_types(type_registry, component_registry, metadata_registry);
-        },
-    );
+    engine_runtime::install_default_plugins(&mut engine.runtime);
 }
 
 /// An assembled, scene-loaded [`Engine`], not yet running. Entirely
@@ -425,7 +393,25 @@ pub struct PreparedRun {
 impl PreparedRun {
     /// Total entity count in the loaded world (roots and their children).
     pub fn entity_count(&self) -> usize {
-        self.engine.world.iter_entities().count()
+        self.engine.runtime.world.iter_entities().count()
+    }
+
+    /// Simulates one frame of `delta_seconds` without a window or GPU:
+    /// input/control/script pumping and every runtime schedule run, the
+    /// renderer is skipped.
+    pub fn step_headless(&mut self, delta_seconds: f32) -> Result<engine_core::RuntimeFrame> {
+        struct HeadlessHooks<'a>(&'a mut RunnerModules);
+
+        impl engine_core::FrameHooks for HeadlessHooks<'_> {
+            fn begin_frame(&mut self, world: &mut World) -> Result<()> {
+                self.0.flush_input(world)
+            }
+        }
+
+        let engine = &mut self.engine;
+        engine
+            .runtime
+            .run_frame(delta_seconds, &mut HeadlessHooks(&mut engine.modules))
     }
 }
 
@@ -457,7 +443,7 @@ pub fn prepare_scene_world(
     configure_runner_world(&mut engine);
 
     let root_entity_count = load_scene_into_world(
-        &mut engine.world,
+        &mut engine.runtime.world,
         engine.modules.assets.asset_server_mut(),
         scene_path,
     )?;

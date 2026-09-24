@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use engine_assets::AssetDatabase;
-use engine_core::EngineModules;
 use engine_project::{Project, ValidationReport};
 use engine_runner::RunnerOptions;
 
@@ -50,10 +49,7 @@ pub fn run(path: PathBuf) -> Result<TestOutcome, CliError> {
     // Exercise Lua for a few frames when present (headless gate).
     let mut lua_frames = 0u32;
     for _ in 0..3 {
-        let _ = prepared
-            .engine
-            .modules
-            .flush_input(&mut prepared.engine.world);
+        prepared.step_headless(1.0 / 60.0).map_err(engine_error)?;
         lua_frames += 1;
     }
 

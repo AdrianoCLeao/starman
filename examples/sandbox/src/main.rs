@@ -9,12 +9,7 @@ use engine_core::{
 };
 use engine_input::{InputModule, InputState};
 use engine_math::{glam::EulerRot, Quat, Vec2, Vec3};
-use engine_physics::{
-    physics_fixed_update_systems_3d, register_physics_reflection_types, ColliderEntityMap3D,
-    ColliderShape3D, PhysicsEntityHandles3D, PhysicsStepConfig3D, PhysicsWorld3D,
-    RigidBody3DBundle, RigidBodyType,
-};
-use engine_reflect::with_reflection_registries;
+use engine_physics::{ColliderShape3D, RigidBody3DBundle, RigidBodyType};
 use engine_render::{MeshRenderable3d, RenderModule};
 use gilrs::{Axis, Button};
 use std::sync::{Arc, Once};
@@ -398,8 +393,8 @@ struct SandboxBootstrapPlugin;
 impl Plugin<SandboxModules> for SandboxBootstrapPlugin {
     fn build(&self, engine: &mut Engine<SandboxModules>) {
         let _identity = engine_math::identity();
-        let fixed_dt_seconds = engine.time.fixed_delta_seconds();
         let hardening = engine
+            .runtime
             .world
             .get_resource::<HardeningConfig>()
             .copied()
@@ -408,24 +403,8 @@ impl Plugin<SandboxModules> for SandboxBootstrapPlugin {
         engine.modules.input.configure_hardening(hardening);
         engine.modules.assets.configure_hardening(hardening);
 
-        engine
-            .insert_resource(PhysicsWorld3D::with_timestep(fixed_dt_seconds))
-            .insert_resource(PhysicsStepConfig3D::new(fixed_dt_seconds))
-            .insert_resource(ColliderEntityMap3D::default())
-            .insert_resource(PhysicsEntityHandles3D::default())
-            .insert_resource(InputState::default())
-            .insert_resource(CameraLookState::default());
-
-        with_reflection_registries(
-            &mut engine.world,
-            |type_registry, component_registry, metadata_registry| {
-                register_physics_reflection_types(
-                    type_registry,
-                    component_registry,
-                    metadata_registry,
-                );
-            },
-        );
+        engine_runtime::install_default_plugins(&mut engine.runtime);
+        engine.insert_resource(CameraLookState::default());
 
         let assets_root = resolve_assets_root(open_project().as_ref());
         match engine
@@ -487,7 +466,6 @@ impl Plugin<SandboxModules> for SandboxBootstrapPlugin {
             .add_startup_systems(ecs_spawn_smoke_entities)
             .add_startup_systems(ecs_spawn_renderable_entity)
             .add_startup_systems(ecs_spawn_physics_scene)
-            .add_fixed_update_systems(physics_fixed_update_systems_3d())
             .add_update_systems(ecs_camera_controller)
             .add_update_systems(ecs_update_smoke);
 
