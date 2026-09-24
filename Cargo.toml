@@ -8,6 +8,7 @@ members = [
     "crates/engine-core",
     "crates/engine-render",
     "crates/engine-physics",
+    "crates/engine-animation",
     "crates/engine-audio",
     "crates/engine-input",
     "crates/engine-assets",
@@ -25,6 +26,7 @@ members = [
     "examples/sandbox",
     "examples/plugins/example_gameplay",
     "tools/engine-benchmarks",
+    "tools/content-gen",
 ]
 
 [workspace.package]

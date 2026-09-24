@@ -1,0 +1,23 @@
+[package]
+name = "engine-animation"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Skeletal and property animation: clips, graphs, IK, root motion"
+
+[dependencies]
+bevy_ecs.workspace = true
+bevy_reflect.workspace = true
+engine-assets = { path = "../engine-assets" }
+engine-core = { path = "../engine-core" }
+engine-math = { path = "../engine-math" }
+engine-physics = { path = "../engine-physics" }
+engine-reflect = { path = "../engine-reflect" }
+gltf.workspace = true
+log.workspace = true
+ron.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+content-gen = { path = "../../tools/content-gen" }
