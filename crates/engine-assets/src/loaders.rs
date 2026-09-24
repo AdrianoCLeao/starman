@@ -45,12 +45,7 @@ pub(crate) fn load_texture_payload(
     })
 }
 
-/// Loads every mesh in a glTF/glb file as a separate [`MeshData`] — one per
-/// `document.meshes()` entry, in that same (stable) order, which is what
-/// mesh sub-asset keys (`"mesh:<index>"`, see
-/// `AssetDatabase::extract_mesh_sub_asset_keys`) index into. Primitives
-/// *within* a single mesh are still merged into that mesh's one
-/// vertex/index buffer, as they always were.
+/// Loads every mesh in a glTF/glb file as a separate [`MeshData`].
 pub(crate) fn load_mesh_payloads(
     path: &Path,
     hardening: &HardeningConfig,
@@ -159,11 +154,15 @@ pub(crate) fn load_mesh_payloads(
             .map(str::to_owned)
             .unwrap_or_else(|| format!("{fallback_name}-{mesh_index}"));
 
-        meshes.push(MeshData {
+        let mut mesh_data = MeshData {
             name,
             vertices,
             indices,
-        });
+            aabb_min: [0.0; 3],
+            aabb_max: [0.0; 3],
+        };
+        mesh_data.recompute_bounds();
+        meshes.push(mesh_data);
     }
 
     if meshes.is_empty() {
@@ -176,10 +175,6 @@ pub(crate) fn load_mesh_payloads(
     Ok(meshes)
 }
 
-/// Loads every mesh in the file (see [`load_mesh_payloads`]) and flattens
-/// them into one merged blob — the long-standing behavior of
-/// `AssetServer::load_mesh_handle`, preserved unchanged for callers that
-/// just want a single renderable mesh for the whole file.
 pub(crate) fn load_mesh_payload_merged(
     path: &Path,
     hardening: &HardeningConfig,
@@ -209,11 +204,57 @@ pub(crate) fn load_mesh_payload_merged(
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "unnamed-mesh".to_owned());
 
-    Ok(MeshData {
+    let mut mesh_data = MeshData {
         name: name.unwrap_or(fallback_name),
         vertices,
         indices,
-    })
+        aabb_min: [0.0; 3],
+        aabb_max: [0.0; 3],
+    };
+    mesh_data.recompute_bounds();
+    Ok(mesh_data)
+}
+
+/// Extract glTF PBR materials as Starman [`MaterialData`] (texture paths empty;
+/// callers may resolve embedded images separately).
+pub fn extract_gltf_materials(path: &Path) -> Result<Vec<MaterialData>> {
+    let (document, _buffers, _images) =
+        gltf::import(path).map_err(|error| EngineError::AssetLoad {
+            path: path.display().to_string(),
+            reason: error.to_string(),
+        })?;
+
+    let mut out = Vec::new();
+    for material in document.materials() {
+        let pbr = material.pbr_metallic_roughness();
+        let base = pbr.base_color_factor();
+        let alpha_mode = match material.alpha_mode() {
+            gltf::material::AlphaMode::Opaque => "OPAQUE",
+            gltf::material::AlphaMode::Mask => "MASK",
+            gltf::material::AlphaMode::Blend => "BLEND",
+        };
+        let emissive = material.emissive_factor();
+        out.push(MaterialData {
+            base_color_factor: base,
+            metallic: pbr.metallic_factor(),
+            roughness: pbr.roughness_factor(),
+            emissive_factor: emissive,
+            normal_scale: material.normal_texture().map(|n| n.scale()).unwrap_or(1.0),
+            occlusion_strength: material
+                .occlusion_texture()
+                .map(|o| o.strength())
+                .unwrap_or(1.0),
+            alpha_mode: alpha_mode.to_owned(),
+            alpha_cutoff: material.alpha_cutoff().unwrap_or(0.5),
+            double_sided: material.double_sided(),
+            base_color_texture: None,
+            metallic_roughness_texture: None,
+            normal_texture: None,
+            occlusion_texture: None,
+            emissive_texture: None,
+        });
+    }
+    Ok(out)
 }
 
 pub(crate) fn load_material_payload(path: &Path) -> Result<MaterialData> {
@@ -222,19 +263,82 @@ pub(crate) fn load_material_payload(path: &Path) -> Result<MaterialData> {
         reason: error.to_string(),
     })?;
 
-    // RON reads fixed-size arrays as tuples (`(1.0, ..)`), but material files
-    // are authored with lists (`[1.0, ..]`), so parse through a `Vec`.
     #[derive(serde::Deserialize)]
     struct RawMaterial {
         base_color_factor: Vec<f32>,
         metallic: f32,
         roughness: f32,
+        #[serde(default)]
+        emissive_factor: Option<Vec<f32>>,
+        #[serde(default)]
+        normal_scale: Option<f32>,
+        #[serde(default)]
+        occlusion_strength: Option<f32>,
+        #[serde(default)]
+        alpha_mode: Option<String>,
+        #[serde(default)]
+        alpha_cutoff: Option<f32>,
+        #[serde(default)]
+        double_sided: Option<bool>,
+        #[serde(default)]
+        base_color_texture: Option<String>,
+        #[serde(default)]
+        metallic_roughness_texture: Option<String>,
+        #[serde(default)]
+        normal_texture: Option<String>,
+        #[serde(default)]
+        occlusion_texture: Option<String>,
+        #[serde(default)]
+        emissive_texture: Option<String>,
     }
 
-    let raw: RawMaterial = ron::from_str(&source).map_err(|error| EngineError::AssetLoad {
+    // Accept either `Some("path")` or a bare `"path"` for texture slots via a
+    // two-pass: try full RON Value map for string-or-option fields.
+    let value: ron::Value = ron::from_str(&source).map_err(|error| EngineError::AssetLoad {
         path: path.display().to_string(),
         reason: format!("failed to parse material: {error}"),
     })?;
+
+    let raw: RawMaterial = match ron::from_str(&source) {
+        Ok(raw) => raw,
+        Err(_) => {
+            // Fallback: coerce bare string texture fields into Options.
+            let mut map = match value {
+                ron::Value::Map(m) => m,
+                _ => {
+                    return Err(EngineError::AssetLoad {
+                        path: path.display().to_string(),
+                        reason: "material root must be a map".to_owned(),
+                    });
+                }
+            };
+            for key in [
+                "base_color_texture",
+                "metallic_roughness_texture",
+                "normal_texture",
+                "occlusion_texture",
+                "emissive_texture",
+            ] {
+                let k = ron::Value::String(key.into());
+                if let Some(ron::Value::String(s)) = map.remove(&k) {
+                    map.insert(
+                        k,
+                        ron::Value::Option(Some(Box::new(ron::Value::String(s)))),
+                    );
+                }
+            }
+            let rewritten = ron::to_string(&ron::Value::Map(map)).map_err(|e| {
+                EngineError::AssetLoad {
+                    path: path.display().to_string(),
+                    reason: e.to_string(),
+                }
+            })?;
+            ron::from_str(&rewritten).map_err(|error| EngineError::AssetLoad {
+                path: path.display().to_string(),
+                reason: format!("failed to parse material: {error}"),
+            })?
+        }
+    };
 
     let base_color_factor: [f32; 4] =
         raw.base_color_factor
@@ -248,15 +352,38 @@ pub(crate) fn load_material_payload(path: &Path) -> Result<MaterialData> {
                 ),
             })?;
 
+    let emissive_factor = match raw.emissive_factor {
+        Some(v) if v.len() == 3 => [v[0], v[1], v[2]],
+        Some(v) => {
+            return Err(EngineError::AssetLoad {
+                path: path.display().to_string(),
+                reason: format!("emissive_factor must have 3 components, found {}", v.len()),
+            });
+        }
+        None => [0.0; 3],
+    };
+
     let material = MaterialData {
         base_color_factor,
         metallic: raw.metallic,
         roughness: raw.roughness,
+        emissive_factor,
+        normal_scale: raw.normal_scale.unwrap_or(1.0),
+        occlusion_strength: raw.occlusion_strength.unwrap_or(1.0),
+        alpha_mode: raw.alpha_mode.unwrap_or_else(|| "OPAQUE".to_owned()),
+        alpha_cutoff: raw.alpha_cutoff.unwrap_or(0.5),
+        double_sided: raw.double_sided.unwrap_or(false),
+        base_color_texture: raw.base_color_texture,
+        metallic_roughness_texture: raw.metallic_roughness_texture,
+        normal_texture: raw.normal_texture,
+        occlusion_texture: raw.occlusion_texture,
+        emissive_texture: raw.emissive_texture,
     };
 
     let all_finite = material
         .base_color_factor
         .iter()
+        .chain(material.emissive_factor.iter())
         .all(|value| value.is_finite())
         && material.metallic.is_finite()
         && material.roughness.is_finite();

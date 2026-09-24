@@ -7,6 +7,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+pub use loaders::extract_gltf_materials;
 use loaders::{
     load_material_payload, load_mesh_payload_merged, load_mesh_payloads, load_texture_payload,
 };
@@ -215,6 +216,44 @@ pub struct MeshData {
     pub name: String,
     pub vertices: Vec<MeshVertex>,
     pub indices: Vec<u32>,
+    #[serde(default)]
+    pub aabb_min: [f32; 3],
+    #[serde(default)]
+    pub aabb_max: [f32; 3],
+}
+
+impl MeshData {
+    pub fn recompute_bounds(&mut self) {
+        if self.vertices.is_empty() {
+            self.aabb_min = [0.0; 3];
+            self.aabb_max = [0.0; 3];
+            return;
+        }
+        let mut min = [f32::MAX; 3];
+        let mut max = [f32::MIN; 3];
+        for v in &self.vertices {
+            for i in 0..3 {
+                min[i] = min[i].min(v.position[i]);
+                max[i] = max[i].max(v.position[i]);
+            }
+        }
+        self.aabb_min = min;
+        self.aabb_max = max;
+    }
+
+    pub fn bounding_sphere_radius(&self) -> f32 {
+        let cx = (self.aabb_min[0] + self.aabb_max[0]) * 0.5;
+        let cy = (self.aabb_min[1] + self.aabb_max[1]) * 0.5;
+        let cz = (self.aabb_min[2] + self.aabb_max[2]) * 0.5;
+        let mut r2 = 0.0f32;
+        for v in &self.vertices {
+            let dx = v.position[0] - cx;
+            let dy = v.position[1] - cy;
+            let dz = v.position[2] - cz;
+            r2 = r2.max(dx * dx + dy * dy + dz * dz);
+        }
+        r2.sqrt()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +261,63 @@ pub struct MaterialData {
     pub base_color_factor: [f32; 4],
     pub metallic: f32,
     pub roughness: f32,
+    #[serde(default)]
+    pub emissive_factor: [f32; 3],
+    #[serde(default = "default_normal_scale")]
+    pub normal_scale: f32,
+    #[serde(default = "default_occlusion_strength")]
+    pub occlusion_strength: f32,
+    #[serde(default = "default_alpha_mode")]
+    pub alpha_mode: String,
+    #[serde(default = "default_alpha_cutoff")]
+    pub alpha_cutoff: f32,
+    #[serde(default)]
+    pub double_sided: bool,
+    /// Project-relative texture paths (resolved to handles at prepare time).
+    #[serde(default)]
+    pub base_color_texture: Option<String>,
+    #[serde(default)]
+    pub metallic_roughness_texture: Option<String>,
+    #[serde(default)]
+    pub normal_texture: Option<String>,
+    #[serde(default)]
+    pub occlusion_texture: Option<String>,
+    #[serde(default)]
+    pub emissive_texture: Option<String>,
+}
+
+fn default_normal_scale() -> f32 {
+    1.0
+}
+fn default_occlusion_strength() -> f32 {
+    1.0
+}
+fn default_alpha_mode() -> String {
+    "OPAQUE".to_owned()
+}
+fn default_alpha_cutoff() -> f32 {
+    0.5
+}
+
+impl Default for MaterialData {
+    fn default() -> Self {
+        Self {
+            base_color_factor: [1.0, 1.0, 1.0, 1.0],
+            metallic: 0.0,
+            roughness: 1.0,
+            emissive_factor: [0.0; 3],
+            normal_scale: 1.0,
+            occlusion_strength: 1.0,
+            alpha_mode: default_alpha_mode(),
+            alpha_cutoff: default_alpha_cutoff(),
+            double_sided: false,
+            base_color_texture: None,
+            metallic_roughness_texture: None,
+            normal_texture: None,
+            occlusion_texture: None,
+            emissive_texture: None,
+        }
+    }
 }
 
 pub struct AssetServer {
@@ -767,11 +863,7 @@ impl AssetServer {
 }
 
 fn default_material() -> MaterialData {
-    MaterialData {
-        base_color_factor: [1.0, 1.0, 1.0, 1.0],
-        metallic: 0.0,
-        roughness: 1.0,
-    }
+    MaterialData::default()
 }
 
 /// Parses a mesh sub-asset's importer key (`"mesh:<index>"`, see

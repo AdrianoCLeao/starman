@@ -1,5 +1,5 @@
 (
   base_color_factor: [1.0, 1.0, 1.0, 1.0],
-  metallic: 0.0,
-  roughness: 1.0,
+  metallic: 0.1,
+  roughness: 0.6,
 )
