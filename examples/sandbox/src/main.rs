@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::{Commands, Query, Res, ResMut, Resource, With};
 use bevy_ecs::world::World;
 use engine_assets::{AssetDatabase, AssetModule, MaterialHandle, MeshHandle, TextureHandle};
-use engine_audio::AudioModule;
 use engine_core::{
     self, Camera2d, Camera3d, Children, Engine, EngineConfig, EngineModules, FrameTime,
     HardeningConfig, Parent, Plugin, PrimaryCamera, RenderLayer3D, Result, SpatialBundle,
@@ -312,7 +311,6 @@ fn resolve_assets_root(project: Option<&engine_project::Project>) -> std::path::
 
 struct SandboxModules {
     renderer: RenderModule,
-    audio: AudioModule,
     input: InputModule,
     assets: AssetModule,
 }
@@ -333,7 +331,6 @@ impl SandboxModules {
 
         Ok(Self {
             renderer: RenderModule::new(),
-            audio: AudioModule::new(),
             input: InputModule::new(),
             assets,
         })
@@ -374,8 +371,7 @@ impl EngineModules for SandboxModules {
                 reload.materials.len()
             );
         }
-
-        self.audio.update()
+        Ok(())
     }
 
     fn render(&mut self, world: &mut World, _alpha: f32) -> Result<()> {
@@ -403,29 +399,25 @@ impl Plugin<SandboxModules> for SandboxBootstrapPlugin {
         engine.modules.input.configure_hardening(hardening);
         engine.modules.assets.configure_hardening(hardening);
 
+        let assets = engine.modules.assets.asset_server().assets().clone();
+        engine.runtime.insert_resource(assets);
         engine_runtime::install_default_plugins(&mut engine.runtime);
+        engine
+            .runtime
+            .world
+            .resource_mut::<engine_audio::AudioEngine>()
+            .set_backend(engine_audio::open_device_backend());
         engine.insert_resource(CameraLookState::default());
 
-        let assets_root = resolve_assets_root(open_project().as_ref());
-        match engine
-            .modules
-            .audio
-            .play_music_with_fallback(assets_root.join("audio/ambient"))
-        {
-            Ok(_) => {
-                log::info!(
-                    target: "engine::sandbox",
-                    "EP-06 music playback started with fallback order OGG->WAV->MP3"
-                );
-            }
-            Err(error) => {
-                log::warn!(
-                    target: "engine::sandbox",
-                    "EP-06 music playback unavailable (continuing without audio): {}",
-                    error
-                );
-            }
-        }
+        engine.runtime.world.spawn(engine_audio::AudioSource {
+            clip: engine_assets::AssetRef::from_path("audio/ambient.wav"),
+            bus: "music".to_owned(),
+            looping: true,
+            autoplay: true,
+            spatial: false,
+            fade_in: 1.0,
+            ..Default::default()
+        });
 
         let render_assets = (|| -> Result<SandboxRenderAssets> {
             let texture = engine
@@ -482,10 +474,14 @@ impl Plugin<SandboxModules> for SandboxBootstrapPlugin {
         );
         log::info!(
             target: "engine::sandbox",
-            "Backends: render={}, physics2d/3d={:?}, audio={:?}, input={:?}",
+            "Backends: render={}, physics2d/3d={:?}, audio={}, input={:?}",
             engine.modules.renderer.backend_type_name(),
             engine_physics::dimensions_supported(),
-            engine.modules.audio.backend_type_names(),
+            engine
+                .runtime
+                .world
+                .resource::<engine_audio::AudioEngine>()
+                .backend_name(),
             engine.modules.input.backend_type_names(),
         );
         log::info!(target: "engine::sandbox", "Sandbox bootstrap complete");

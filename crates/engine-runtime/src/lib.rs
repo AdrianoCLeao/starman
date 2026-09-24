@@ -62,6 +62,7 @@ pub fn default_plugins() -> Vec<Box<dyn RuntimePlugin>> {
         Box::new(engine_physics::PhysicsPlugin),
         Box::new(engine_animation::AnimationPlugin),
         Box::new(engine_vfx::VfxPlugin),
+        Box::new(engine_audio::AudioPlugin),
         Box::new(engine_localization::LocalizationPlugin),
         Box::new(engine_ui::UiPlugin),
         Box::new(engine_render::RenderPlugin),
@@ -94,9 +95,24 @@ pub fn build_runtime(options: &RuntimeOptions) -> GameRuntime {
 pub fn apply_game_settings(runtime: &mut GameRuntime, settings: &GameSettings) {
     apply_input_settings(runtime, &settings.input);
     apply_physics_settings(runtime, &settings.physics);
+    apply_audio_settings(runtime, &settings.audio);
     apply_ui_settings(runtime, &settings.ui);
     apply_localization_settings(runtime, &settings.localization);
     runtime.insert_resource(ProjectGameSettings(settings.clone()));
+}
+
+fn apply_audio_settings(runtime: &mut GameRuntime, audio: &engine_project::AudioSettings) {
+    let Some(mut source) = runtime
+        .world
+        .get_resource_mut::<engine_audio::AudioMixerSource>()
+    else {
+        return;
+    };
+    match &audio.mixer {
+        Some(mixer) => source.set_asset(mixer.clone()),
+        None if source.asset().is_some() => source.clear(),
+        None => {}
+    }
 }
 
 fn apply_ui_settings(runtime: &mut GameRuntime, ui: &engine_project::UiSettings) {
@@ -214,6 +230,23 @@ mod tests {
                 .resource::<engine_input::LocalPlayers>()
                 .max_players,
             2
+        );
+    }
+
+    #[test]
+    fn game_settings_select_the_audio_mixer() {
+        let mut settings = GameSettings::default();
+        settings.audio.mixer = Some(engine_assets::AssetRef::from_path("audio/game.mixer.ron"));
+        let runtime = build_runtime(&RuntimeOptions::default().with_game_settings(settings));
+        let source = runtime.world.resource::<engine_audio::AudioMixerSource>();
+        assert_eq!(source.asset().unwrap().path, "audio/game.mixer.ron");
+        assert_eq!(
+            runtime
+                .world
+                .resource::<engine_audio::AudioEngine>()
+                .backend_name(),
+            "null",
+            "hosts opt into devices"
         );
     }
 

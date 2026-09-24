@@ -4,9 +4,16 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+description = "Audio: mixer buses, effects, snapshots, spatial sources and zones over a pluggable backend"
 
 [dependencies]
-cpal.workspace = true
+bevy_ecs.workspace = true
+bevy_reflect.workspace = true
+engine-assets = { path = "../engine-assets" }
 engine-core = { path = "../engine-core" }
+engine-math = { path = "../engine-math" }
+engine-reflect = { path = "../engine-reflect" }
 kira.workspace = true
 log.workspace = true
+ron.workspace = true
+serde.workspace = true

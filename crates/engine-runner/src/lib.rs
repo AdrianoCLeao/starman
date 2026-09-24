@@ -15,7 +15,6 @@ use std::sync::Arc;
 
 use bevy_ecs::world::World;
 use engine_assets::{AssetDatabase, AssetModule, AssetServer, SceneDeserializer};
-use engine_audio::AudioModule;
 use engine_core::{
     Engine, EngineConfig, EngineError, EngineModules, FrameTime, GameClock, HardeningConfig,
     Result, Window, WindowConfig, WindowEvent,
@@ -92,7 +91,6 @@ impl RunnerOptions {
 
 pub struct RunnerModules {
     renderer: RenderModule,
-    audio: AudioModule,
     input: InputModule,
     assets: AssetModule,
     control_rx: Option<Receiver<RunnerControlCommand>>,
@@ -147,7 +145,6 @@ impl RunnerModules {
 
         Ok(Self {
             renderer: RenderModule::new(),
-            audio: AudioModule::new(),
             input: InputModule::new(),
             assets,
             control_rx,
@@ -295,8 +292,7 @@ impl EngineModules for RunnerModules {
                 }
             }
         }
-
-        self.audio.update()
+        Ok(())
     }
 
     fn render(&mut self, world: &mut World, _alpha: f32) -> Result<()> {
@@ -408,6 +404,11 @@ fn configure_runner_world(engine: &mut Engine<RunnerModules>) {
             .insert_resource(engine_input::InputUserSettingsStore::load(
                 dir.join("input.ron"),
             ));
+        engine
+            .runtime
+            .insert_resource(engine_audio::AudioUserSettingsStore::load(
+                dir.join("audio.ron"),
+            ));
     }
 }
 
@@ -510,7 +511,15 @@ pub fn run_scene_windowed(
     scene_path: &Path,
     options: RunnerOptions,
 ) -> Result<()> {
-    let prepared = prepare_scene_world(assets_root, scene_path, options)?;
+    let mut prepared = prepare_scene_world(assets_root, scene_path, options)?;
+    // Only windowed runs own an output device; headless preparation (tests,
+    // `starman test`) keeps the deterministic null backend.
+    prepared
+        .engine
+        .runtime
+        .world
+        .resource_mut::<engine_audio::AudioEngine>()
+        .set_backend(engine_audio::open_device_backend());
 
     match prepared.engine.run() {
         Ok(()) => Ok(()),
