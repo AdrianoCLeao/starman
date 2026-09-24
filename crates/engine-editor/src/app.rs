@@ -32,7 +32,10 @@ use engine_physics::{
 };
 use engine_project::Project;
 use engine_reflect::{ComponentRegistry, ReflectMetadataRegistry, ReflectTypeRegistry};
-use engine_render::{DebugView, MeshRenderable3d, RenderSceneAdapter, SpriteRenderable2d};
+use engine_render::{
+    DebugView, MeshRenderable3d, QualityPreset, RenderSceneAdapter, SpriteRenderable2d,
+};
+
 use engine_scene::expand_all_instances;
 
 use crate::asset_browser::{AssetBrowserState, AssetKind};
@@ -4057,6 +4060,18 @@ impl EditorApp {
                             ui.label(format!("Graph: {passes}"));
                             ui.separator();
                         }
+                        let mut preset = frame.quality().preset;
+                        egui::ComboBox::from_id_salt("render-quality-preset")
+                            .selected_text(preset.as_str())
+                            .show_ui(ui, |ui| {
+                                for candidate in QualityPreset::all() {
+                                    ui.selectable_value(&mut preset, candidate, candidate.as_str());
+                                }
+                            });
+                        if preset != frame.quality().preset {
+                            frame.set_quality_preset(preset);
+                        }
+                        ui.separator();
                         let mut view = frame.debug_view();
                         egui::ComboBox::from_id_salt("render-debug-view")
                             .selected_text(view.as_str())
@@ -5047,6 +5062,41 @@ impl EditorApp {
                     &mut self.command_history,
                 ) {
                     self.unsaved_changes = true;
+                }
+
+                // M5 material inspector: show PBR factors for the selected mesh.
+                if let Some(entity) = self.selection.primary() {
+                    if let Some(mesh) = self.world.get::<MeshRenderable3d>(entity).copied() {
+                        ui.separator();
+                        ui.heading("Material (PBR)");
+                        if let Some(mat) = self.asset_server.material_payload(mesh.material) {
+                            ui.label(format!("base_color: {:?}", mat.base_color_factor));
+                            ui.label(format!(
+                                "metallic: {:.2}  roughness: {:.2}",
+                                mat.metallic, mat.roughness
+                            ));
+                            ui.label(format!(
+                                "emissive: {:?}  alpha: {}",
+                                mat.emissive_factor, mat.alpha_mode
+                            ));
+                            if let Some(path) = &mat.base_color_texture {
+                                ui.label(format!("albedo: {path}"));
+                            }
+                            let [r, g, b, a] = mat.base_color_factor;
+                            let color = egui::Color32::from_rgba_unmultiplied(
+                                (r * 255.0) as u8,
+                                (g * 255.0) as u8,
+                                (b * 255.0) as u8,
+                                (a * 255.0) as u8,
+                            );
+                            let (rect, _) = ui
+                                .allocate_exact_size(egui::vec2(64.0, 64.0), egui::Sense::hover());
+                            ui.painter().rect_filled(rect, 4.0, color);
+                            ui.label("preview");
+                        } else {
+                            ui.label("(material payload unavailable)");
+                        }
+                    }
                 }
             })
             .response;
