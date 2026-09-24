@@ -319,8 +319,7 @@ impl Preprocessor<'_> {
                         let value = match name {
                             "ifdef" => self.defines.contains(rest),
                             "ifndef" => !self.defines.contains(rest),
-                            _ => evaluate_condition(rest, &self.defines)
-                                .map_err(&error)?,
+                            _ => evaluate_condition(rest, &self.defines).map_err(&error)?,
                         };
                         conditionals.push(Conditional {
                             parent_active,

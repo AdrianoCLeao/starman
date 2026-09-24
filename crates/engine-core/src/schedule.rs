@@ -11,6 +11,12 @@ use bevy_ecs::schedule::{ExecutorKind, IntoSystemSetConfigs, Schedule, ScheduleL
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Startup;
 
+/// Runs once per frame after the OS pump and before any fixed step, so
+/// input actions (and anything else sampled per frame) are current when
+/// the simulation reads them.
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct First;
+
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FixedUpdate;
 
@@ -24,9 +30,19 @@ pub struct PreRender;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ScheduleKind {
     Startup,
+    First,
     FixedUpdate,
     Update,
     PreRender,
+}
+
+/// Ordered sets of the per-frame [`First`] schedule.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FirstSet {
+    /// Input action evaluation, device assignment, rebinding.
+    Input,
+    /// Consumers of fresh per-frame input (UI pointer routing, …).
+    Late,
 }
 
 /// Ordered sets of the fixed-step simulation schedule.
@@ -94,6 +110,7 @@ pub enum PreRenderSet {
 
 pub struct EngineSchedules {
     pub startup: Schedule,
+    pub first: Schedule,
     pub fixed_update: Schedule,
     pub update: Schedule,
     pub pre_render: Schedule,
@@ -109,6 +126,10 @@ impl EngineSchedules {
     pub fn new() -> Self {
         let mut startup = Schedule::new(Startup);
         startup.set_executor_kind(ExecutorKind::MultiThreaded);
+
+        let mut first = Schedule::new(First);
+        first.set_executor_kind(ExecutorKind::MultiThreaded);
+        first.configure_sets((FirstSet::Input, FirstSet::Late).chain());
 
         let mut fixed_update = Schedule::new(FixedUpdate);
         fixed_update.set_executor_kind(ExecutorKind::MultiThreaded);
@@ -160,6 +181,7 @@ impl EngineSchedules {
 
         Self {
             startup,
+            first,
             fixed_update,
             update,
             pre_render,
@@ -169,6 +191,7 @@ impl EngineSchedules {
     pub fn get_mut(&mut self, kind: ScheduleKind) -> &mut Schedule {
         match kind {
             ScheduleKind::Startup => &mut self.startup,
+            ScheduleKind::First => &mut self.first,
             ScheduleKind::FixedUpdate => &mut self.fixed_update,
             ScheduleKind::Update => &mut self.update,
             ScheduleKind::PreRender => &mut self.pre_render,

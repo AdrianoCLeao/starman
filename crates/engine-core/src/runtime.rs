@@ -7,7 +7,8 @@
 //! identically everywhere it runs.
 //!
 //! A frame is driven by [`GameRuntime::run_frame`], which advances the
-//! game clock (with time scale and pause), runs the fixed-step schedule
+//! game clock (with time scale and pause), runs the per-frame `First`
+//! schedule (input actions), then the fixed-step schedule
 //! zero or more times, then the update and pre-render schedules, calling
 //! [`FrameHooks`] around them for non-ECS modules (renderer, audio device,
 //! OS input pump, script hosts).
@@ -181,6 +182,8 @@ impl GameRuntime {
             .insert_resource(HardeningConfig::default())
             .insert_resource(GameClock::default())
             .insert_resource(crate::DebugDraw::default())
+            .insert_resource(crate::AppControl::default())
+            .insert_resource(crate::CursorState::default())
             .add_systems(
                 ScheduleKind::PreRender,
                 (propagate_transforms, sync_camera_aspect_from_window)
@@ -330,6 +333,7 @@ impl GameRuntime {
         self.publish_frame_time(delta, real_delta);
         self.run_startup();
         hooks.begin_frame(&mut self.world)?;
+        self.schedules.first.run(&mut self.world);
 
         let mut fixed_steps = 0;
         while self.accumulator_seconds >= self.fixed_timestep_seconds {

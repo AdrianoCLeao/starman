@@ -99,6 +99,8 @@ pub struct RunnerModules {
     stop_requested: bool,
     extensibility: Option<ExtensibilityHost>,
     game_settings: Option<engine_project::GameSettings>,
+    /// Where per-user settings (rebinding, volumes) persist.
+    user_settings_dir: Option<std::path::PathBuf>,
 }
 
 impl RunnerModules {
@@ -115,10 +117,12 @@ impl RunnerModules {
         }
 
         let mut game_settings = None;
+        let mut user_settings_dir = None;
         let extensibility = if let Some(root) = project_root {
             match Project::open(&root) {
                 Ok(project) => {
                     game_settings = Some(project.manifest.game.clone());
+                    user_settings_dir = Some(project.paths.dev_user_settings_dir());
                     let mut host =
                         ExtensibilityHost::bootstrap(project.paths.root(), &project.manifest)?;
                     if let Err(error) = host.load_lua_entry() {
@@ -150,6 +154,7 @@ impl RunnerModules {
             stop_requested: false,
             extensibility,
             game_settings,
+            user_settings_dir,
         })
     }
 
@@ -239,6 +244,10 @@ impl EngineModules for RunnerModules {
 
     fn window_event(&mut self, event: &WindowEvent) -> Result<()> {
         self.input.handle_window_event(event)
+    }
+
+    fn device_event(&mut self, event: &engine_core::DeviceEvent) -> Result<()> {
+        self.input.handle_device_event(event)
     }
 
     fn flush_input(&mut self, world: &mut World) -> Result<()> {
@@ -389,6 +398,13 @@ fn configure_runner_world(engine: &mut Engine<RunnerModules>) {
     if let Some(settings) = engine.modules.game_settings.clone() {
         engine_runtime::apply_game_settings(&mut engine.runtime, &settings);
     }
+    if let Some(dir) = &engine.modules.user_settings_dir {
+        engine
+            .runtime
+            .insert_resource(engine_input::InputUserSettingsStore::load(
+                dir.join("input.ron"),
+            ));
+    }
 }
 
 /// An assembled, scene-loaded [`Engine`], not yet running. Entirely
@@ -449,7 +465,17 @@ pub fn prepare_scene_world(
         options.project_root,
     )?;
 
-    let config = EngineConfig::with_app_name(options.app_name).with_window_config(options.window);
+    let mut window = options.window;
+    // A game with input actions owns Escape (pause menus); only bare
+    // scene previews keep the Escape-to-quit convenience.
+    if modules
+        .game_settings
+        .as_ref()
+        .is_some_and(|settings| settings.input.actions.is_some())
+    {
+        window.escape_to_exit = false;
+    }
+    let config = EngineConfig::with_app_name(options.app_name).with_window_config(window);
 
     let mut engine = Engine::new(config, modules)?;
     configure_runner_world(&mut engine);

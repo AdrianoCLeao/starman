@@ -9,6 +9,9 @@ license.workspace = true
 bevy_ecs.workspace = true
 engine-math = { path = "../engine-math" }
 engine-core = { path = "../engine-core" }
+engine-assets = { path = "../engine-assets" }
 gilrs.workspace = true
 log.workspace = true
+ron.workspace = true
+serde.workspace = true
 winit.workspace = true

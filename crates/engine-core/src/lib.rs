@@ -1,3 +1,4 @@
+pub mod app_control;
 pub mod camera;
 pub mod error;
 pub mod hardening;
@@ -12,6 +13,7 @@ pub mod time;
 pub mod transform;
 pub mod window;
 
+pub use app_control::{AppControl, CursorGrab, CursorState};
 pub use camera::{sync_camera_aspect_from_window, Camera2d, Camera3d, PrimaryCamera, WindowSize};
 pub use error::{EngineError, Result};
 pub use hardening::HardeningConfig;
@@ -24,8 +26,8 @@ pub use runtime::{
     MAX_FIXED_STEPS_PER_FRAME,
 };
 pub use schedule::{
-    EngineSchedules, FixedSet, FixedUpdate, PreRender, PreRenderSet, ScheduleKind, Startup, Update,
-    UpdateSet,
+    EngineSchedules, First, FirstSet, FixedSet, FixedUpdate, PreRender, PreRenderSet, ScheduleKind,
+    Startup, Update, UpdateSet,
 };
 pub use tag::{Hidden, PhysicsControlled, RenderLayer2D, RenderLayer3D, Visible};
 pub use time::{
@@ -37,7 +39,7 @@ pub use transform::{
     SpatialBundle, Transform,
 };
 pub use window::{run_windowed, WindowConfig, WindowLoop};
-pub use winit::event::WindowEvent;
+pub use winit::event::{DeviceEvent, WindowEvent};
 pub use winit::window::Window;
 
 use bevy_ecs::{schedule::IntoSystemConfigs, system::Resource, world::World};
@@ -170,6 +172,11 @@ pub trait EngineModules {
 
     /// Called when the OS reports a window resize event for the active window.
     fn resized(&mut self, _width: u32, _height: u32) -> Result<()> {
+        Ok(())
+    }
+
+    /// Raw device events (relative mouse motion, …).
+    fn device_event(&mut self, _event: &winit::event::DeviceEvent) -> Result<()> {
         Ok(())
     }
 }
@@ -359,6 +366,21 @@ impl<M: EngineModules> WindowLoop for Engine<M> {
 
     fn title(&self) -> String {
         self.window_title()
+    }
+
+    fn device_event(&mut self, event: &winit::event::DeviceEvent) -> Result<()> {
+        self.modules.device_event(event)
+    }
+
+    fn wants_exit(&self) -> bool {
+        self.runtime
+            .world
+            .get_resource::<AppControl>()
+            .is_some_and(|control| control.exit_requested)
+    }
+
+    fn cursor(&self) -> Option<CursorState> {
+        self.runtime.world.get_resource::<CursorState>().copied()
     }
 }
 

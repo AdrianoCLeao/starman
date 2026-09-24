@@ -38,7 +38,7 @@ bevy_ecs = { version = "0.15", default-features = false }
 bevy_reflect = { version = "0.15", features = ["glam"] }
 bytemuck = { version = "1.19", features = ["derive"] }
 wgpu = { version = "24", default-features = false, features = ["wgsl", "dx12", "metal", "vulkan-portability", "webgpu"] }
-winit = { version = "0.30" }
+winit = { version = "0.30", features = ["serde"] }
 glam = { version = "0.29", features = ["serde"] }
 rapier3d = { version = "0.22" }
 rapier2d = { version = "0.22" }
@@ -53,7 +53,7 @@ notify = "6"
 uuid = { version = "1", features = ["v4", "v5", "serde"] }
 blake3 = "1"
 clap = { version = "4", features = ["derive"] }
-gilrs = "0.11"
+gilrs = { version = "0.11", features = ["serde-serialize"] }
 log = "0.4"
 env_logger = "0.11"
 tracing = "0.1"

@@ -77,7 +77,23 @@ pub fn build_runtime(options: &RuntimeOptions) -> GameRuntime {
 /// Pushes the project's typed game settings into the subsystems' runtime
 /// resources. Safe to call again after the settings change (editor).
 pub fn apply_game_settings(runtime: &mut GameRuntime, settings: &GameSettings) {
+    apply_input_settings(runtime, &settings.input);
     runtime.insert_resource(ProjectGameSettings(settings.clone()));
+}
+
+fn apply_input_settings(runtime: &mut GameRuntime, input: &engine_project::InputSettings) {
+    let world = &mut runtime.world;
+    if let Some(mut source) = world.get_resource_mut::<engine_input::InputActionsSource>() {
+        match &input.actions {
+            Some(actions) => source.set_asset(actions.clone()),
+            None => source.clear(),
+        }
+    }
+    if let Some(mut players) = world.get_resource_mut::<engine_input::LocalPlayers>() {
+        if players.max_players != input.max_local_players.clamp(1, 8) {
+            *players = engine_input::LocalPlayers::new(input.max_local_players);
+        }
+    }
 }
 
 /// The project's game settings as last applied, for systems and tools that
@@ -95,6 +111,23 @@ mod tests {
         for plugin in default_plugins() {
             assert!(runtime.has_plugin(plugin.name()), "{}", plugin.name());
         }
+    }
+
+    #[test]
+    fn game_settings_configure_input() {
+        let mut settings = GameSettings::default();
+        settings.input.actions = Some(engine_assets::AssetRef::from_path("input/game.input.ron"));
+        settings.input.max_local_players = 2;
+        let runtime = build_runtime(&RuntimeOptions::default().with_game_settings(settings));
+        let source = runtime.world.resource::<engine_input::InputActionsSource>();
+        assert_eq!(source.asset().unwrap().path, "input/game.input.ron");
+        assert_eq!(
+            runtime
+                .world
+                .resource::<engine_input::LocalPlayers>()
+                .max_players,
+            2
+        );
     }
 
     #[test]

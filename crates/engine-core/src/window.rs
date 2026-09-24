@@ -4,11 +4,13 @@ use std::time::{Duration, Instant};
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
-    event::{ElementState, WindowEvent},
+    event::{DeviceEvent, DeviceId, ElementState, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::{Window, WindowAttributes, WindowId},
+    window::{CursorGrabMode, Window, WindowAttributes, WindowId},
 };
+
+use crate::app_control::{CursorGrab, CursorState};
 
 const DEFAULT_VSYNC_FALLBACK_REFRESH_RATE_MILLIHZ: u32 = 60_000;
 const ESCAPE_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
@@ -35,6 +37,21 @@ pub trait WindowLoop {
     fn title(&self) -> String {
         "Starman".to_owned()
     }
+
+    /// Raw device input (mouse motion while the cursor is locked, …).
+    fn device_event(&mut self, _event: &DeviceEvent) -> Result<()> {
+        Ok(())
+    }
+
+    /// Whether the application asked to quit (e.g. a "Quit" menu entry).
+    fn wants_exit(&self) -> bool {
+        false
+    }
+
+    /// Desired cursor state; applied to the window when it changes.
+    fn cursor(&self) -> Option<CursorState> {
+        None
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +61,10 @@ pub struct WindowConfig {
     pub height: u32,
     pub resizable: bool,
     pub vsync: bool,
+    /// Pressing Escape twice within two seconds quits. Convenient for tools
+    /// and samples; games that use Escape (pause menus) turn it off and
+    /// quit through [`crate::AppControl`].
+    pub escape_to_exit: bool,
 }
 
 impl Default for WindowConfig {
@@ -54,6 +75,7 @@ impl Default for WindowConfig {
             height: 720,
             resizable: true,
             vsync: true,
+            escape_to_exit: true,
         }
     }
 }
@@ -77,6 +99,11 @@ impl WindowConfig {
 
     pub fn with_vsync(mut self, vsync: bool) -> Self {
         self.vsync = vsync;
+        self
+    }
+
+    pub fn with_escape_to_exit(mut self, escape_to_exit: bool) -> Self {
+        self.escape_to_exit = escape_to_exit;
         self
     }
 }
@@ -116,6 +143,7 @@ struct WindowRunner<A: WindowLoop> {
     next_redraw_deadline: Option<Instant>,
     last_escape_press: Option<Instant>,
     error: Option<EngineError>,
+    applied_cursor: Option<CursorState>,
 }
 
 impl<A: WindowLoop> WindowRunner<A> {
@@ -129,6 +157,7 @@ impl<A: WindowLoop> WindowRunner<A> {
             next_redraw_deadline: None,
             last_escape_press: None,
             error: None,
+            applied_cursor: None,
         }
     }
 
@@ -145,7 +174,9 @@ impl<A: WindowLoop> WindowRunner<A> {
             return false;
         }
 
-        if !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape)) {
+        if !self.config.escape_to_exit
+            || !matches!(event.physical_key, PhysicalKey::Code(KeyCode::Escape))
+        {
             return false;
         }
 
@@ -253,11 +284,32 @@ impl<A: WindowLoop> ApplicationHandler for WindowRunner<A> {
                     return;
                 }
 
+                if self.app.wants_exit() {
+                    log::info!(target: "engine::window", "application requested exit");
+                    event_loop.exit();
+                    return;
+                }
                 if let Some(window) = self.window.as_ref() {
                     window.set_title(&self.app.title());
+                    let desired = self.app.cursor();
+                    if let Some(state) = desired.filter(|_| desired != self.applied_cursor) {
+                        apply_cursor(window, state);
+                        self.applied_cursor = desired;
+                    }
                 }
             }
             _ => {}
+        }
+    }
+
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        if let Err(error) = self.app.device_event(&event) {
+            self.fail(event_loop, error);
         }
     }
 
@@ -295,6 +347,22 @@ impl<A: WindowLoop> ApplicationHandler for WindowRunner<A> {
 
         event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
     }
+}
+
+fn apply_cursor(window: &Window, state: CursorState) {
+    window.set_cursor_visible(state.visible);
+    let modes: &[CursorGrabMode] = match state.grab {
+        CursorGrab::None => &[CursorGrabMode::None],
+        // Locked is not supported everywhere (X11); fall back to confined.
+        CursorGrab::Locked => &[CursorGrabMode::Locked, CursorGrabMode::Confined],
+        CursorGrab::Confined => &[CursorGrabMode::Confined, CursorGrabMode::Locked],
+    };
+    for mode in modes {
+        if window.set_cursor_grab(*mode).is_ok() {
+            return;
+        }
+    }
+    log::warn!(target: "engine::window", "cursor grab {:?} is not supported here", state.grab);
 }
 
 fn frame_interval_from_refresh_rate(

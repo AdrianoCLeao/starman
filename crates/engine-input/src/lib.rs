@@ -1,3 +1,30 @@
+//! Input: raw device state ([`InputState`]), the OS pump
+//! ([`InputModule`]), and the action layer on top — action maps
+//! ([`actions`]), local players with device assignment ([`players`]),
+//! interactions ([`state`]), rebinding with persisted user overrides
+//! ([`rebind`], [`settings`]) and the runtime plugin ([`plugin`]).
+
+pub mod actions;
+pub mod evaluate;
+pub mod players;
+pub mod plugin;
+pub mod rebind;
+pub mod settings;
+pub mod state;
+
+pub use actions::{
+    ActionContext, ActionDef, ActionKind, Binding, ControlScheme, InputActions, InputActionsLoader,
+    InputSource, Interaction, Modifier, Stick, INPUT_ACTIONS_VERSION,
+};
+pub use players::{JoinPolicy, LocalPlayers, PlayerInput};
+pub use plugin::{
+    ActionEvent, ActionPhase, ControlSchemeChanged, InputActionsSource, InputPlugin,
+    PlayerDeviceChange, PlayerDeviceEvent,
+};
+pub use rebind::{RebindEvent, RebindOutcome, RebindRequest, Rebinding};
+pub use settings::{InputUserSettings, InputUserSettingsStore, INPUT_USER_SETTINGS_VERSION};
+pub use state::ActionState;
+
 use bevy_ecs::prelude::Resource;
 use engine_core::{HardeningConfig, Result};
 use engine_math::Vec2;
@@ -6,8 +33,24 @@ use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
 };
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
+
+/// A physical device family instance a player can own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum InputDevice {
+    KeyboardMouse,
+    Gamepad(usize),
+}
+
+impl InputDevice {
+    pub fn scheme(self) -> ControlScheme {
+        match self {
+            Self::KeyboardMouse => ControlScheme::KeyboardMouse,
+            Self::Gamepad(_) => ControlScheme::Gamepad,
+        }
+    }
+}
 
 pub const DEFAULT_GAMEPAD_DEADZONE: f32 = 0.15;
 
@@ -79,6 +122,8 @@ pub struct GamepadState {
     connected: bool,
     buttons: ButtonState<Button>,
     axes: HashMap<Axis, f32>,
+    /// Analog value of pressure-sensitive buttons (triggers).
+    button_values: HashMap<Button, f32>,
 }
 
 #[derive(Resource, Debug, Clone)]
@@ -87,10 +132,18 @@ pub struct InputState {
     mouse_buttons: ButtonState<MouseButton>,
     pub mouse_position: Vec2,
     pub mouse_delta: Vec2,
+    /// Raw relative mouse motion this frame (works with a locked cursor).
+    pub mouse_motion: Vec2,
     pub scroll_delta: f32,
     gamepads: HashMap<usize, GamepadState>,
     gamepad_deadzone: f32,
     last_cursor_position: Option<Vec2>,
+    /// Devices that produced any press or significant motion this frame.
+    active_devices: Vec<InputDevice>,
+    /// Digital sources newly pressed this frame, with their device.
+    new_presses: Vec<(InputDevice, InputSource)>,
+    /// Gamepad connection changes this frame.
+    gamepad_changes: Vec<(usize, bool)>,
 }
 
 impl Default for InputState {
@@ -100,10 +153,14 @@ impl Default for InputState {
             mouse_buttons: ButtonState::default(),
             mouse_position: Vec2::ZERO,
             mouse_delta: Vec2::ZERO,
+            mouse_motion: Vec2::ZERO,
             scroll_delta: 0.0,
             gamepads: HashMap::new(),
             gamepad_deadzone: DEFAULT_GAMEPAD_DEADZONE,
             last_cursor_position: None,
+            active_devices: Vec::new(),
+            new_presses: Vec::new(),
+            gamepad_changes: Vec::new(),
         }
     }
 }
@@ -113,7 +170,11 @@ impl InputState {
         self.keys.begin_frame();
         self.mouse_buttons.begin_frame();
         self.mouse_delta = Vec2::ZERO;
+        self.mouse_motion = Vec2::ZERO;
         self.scroll_delta = 0.0;
+        self.active_devices.clear();
+        self.new_presses.clear();
+        self.gamepad_changes.clear();
 
         for gamepad in self.gamepads.values_mut() {
             gamepad.buttons.begin_frame();
@@ -149,6 +210,9 @@ impl InputState {
     pub fn process_key_input(&mut self, code: KeyCode, state: ElementState, repeat: bool) {
         match state {
             ElementState::Pressed if !repeat => {
+                if !self.keys.held(code) {
+                    self.note_press(InputDevice::KeyboardMouse, InputSource::Key(code));
+                }
                 self.keys.press(code);
             }
             ElementState::Released => {
@@ -160,7 +224,12 @@ impl InputState {
 
     pub fn process_mouse_button_input(&mut self, button: MouseButton, state: ElementState) {
         match state {
-            ElementState::Pressed => self.mouse_buttons.press(button),
+            ElementState::Pressed => {
+                if !self.mouse_buttons.held(button) {
+                    self.note_press(InputDevice::KeyboardMouse, InputSource::MouseButton(button));
+                }
+                self.mouse_buttons.press(button)
+            }
             ElementState::Released => self.mouse_buttons.release(button),
         }
     }
@@ -178,10 +247,94 @@ impl InputState {
 
     pub fn process_scroll_delta(&mut self, delta: f32) {
         self.scroll_delta += delta;
+        if delta != 0.0 {
+            self.note_activity(InputDevice::KeyboardMouse);
+        }
+    }
+
+    /// Raw relative motion (e.g. `DeviceEvent::MouseMotion`).
+    pub fn process_mouse_motion(&mut self, dx: f32, dy: f32) {
+        self.mouse_motion += Vec2::new(dx, dy);
+        if dx.abs() + dy.abs() > 2.0 {
+            self.note_activity(InputDevice::KeyboardMouse);
+        }
+    }
+
+    fn note_activity(&mut self, device: InputDevice) {
+        if !self.active_devices.contains(&device) {
+            self.active_devices.push(device);
+        }
+    }
+
+    fn note_press(&mut self, device: InputDevice, source: InputSource) {
+        self.note_activity(device);
+        self.new_presses.push((device, source));
+    }
+
+    /// Devices that were used this frame, in first-use order.
+    pub fn active_devices(&self) -> &[InputDevice] {
+        &self.active_devices
+    }
+
+    /// Digital inputs pressed this frame (rebinding, "press any key").
+    pub fn new_presses(&self) -> &[(InputDevice, InputSource)] {
+        &self.new_presses
+    }
+
+    /// Gamepad connections (`true`) and disconnections this frame.
+    pub fn gamepad_changes(&self) -> &[(usize, bool)] {
+        &self.gamepad_changes
+    }
+
+    /// Connected gamepad slots, ascending.
+    pub fn connected_gamepads(&self) -> Vec<usize> {
+        let mut slots: Vec<usize> = self
+            .gamepads
+            .iter()
+            .filter(|(_, state)| state.connected)
+            .map(|(slot, _)| *slot)
+            .collect();
+        slots.sort_unstable();
+        slots
+    }
+
+    /// Analog value of a gamepad button (1.0/0.0 for digital buttons).
+    pub fn gamepad_button_value(&self, gamepad_slot: usize, button: Button) -> f32 {
+        let Some(state) = self.gamepads.get(&gamepad_slot) else {
+            return 0.0;
+        };
+        state
+            .button_values
+            .get(&button)
+            .copied()
+            .unwrap_or(if state.buttons.held(button) { 1.0 } else { 0.0 })
+    }
+
+    /// Releases everything held (focus loss, entering a menu).
+    pub fn release_all(&mut self) {
+        let keys: Vec<KeyCode> = self.keys.held.iter().copied().collect();
+        for key in keys {
+            self.keys.release(key);
+        }
+        let buttons: Vec<MouseButton> = self.mouse_buttons.held.iter().copied().collect();
+        for button in buttons {
+            self.mouse_buttons.release(button);
+        }
+        for gamepad in self.gamepads.values_mut() {
+            let held: Vec<Button> = gamepad.buttons.held.iter().copied().collect();
+            for button in held {
+                gamepad.buttons.release(button);
+            }
+            gamepad.axes.clear();
+            gamepad.button_values.clear();
+        }
     }
 
     pub fn set_gamepad_connected(&mut self, gamepad_slot: usize, connected: bool) {
         let gamepad = self.gamepads.entry(gamepad_slot).or_default();
+        if gamepad.connected != connected {
+            self.gamepad_changes.push((gamepad_slot, connected));
+        }
         gamepad.connected = connected;
         if !connected {
             gamepad.buttons.clear_all();
@@ -196,17 +349,50 @@ impl InputState {
         pressed: bool,
     ) {
         let gamepad = self.gamepads.entry(gamepad_slot).or_default();
+        gamepad.connected = true;
+        let was_held = gamepad.buttons.held(button);
         if pressed {
             gamepad.buttons.press(button);
         } else {
             gamepad.buttons.release(button);
         }
+        if pressed && !was_held {
+            self.note_press(
+                InputDevice::Gamepad(gamepad_slot),
+                InputSource::GamepadButton(button),
+            );
+        }
+    }
+
+    /// Analog button value (triggers); crossing 0.5 counts as a press.
+    pub fn process_gamepad_button_value(
+        &mut self,
+        gamepad_slot: usize,
+        button: Button,
+        value: f32,
+    ) {
+        let value = value.clamp(0.0, 1.0);
+        self.gamepads
+            .entry(gamepad_slot)
+            .or_default()
+            .button_values
+            .insert(button, value);
+        self.process_gamepad_button_input(gamepad_slot, button, value >= 0.5);
     }
 
     pub fn process_gamepad_axis_input(&mut self, gamepad_slot: usize, axis: Axis, value: f32) {
         let normalized = apply_deadzone(value, self.gamepad_deadzone);
         let gamepad = self.gamepads.entry(gamepad_slot).or_default();
-        gamepad.axes.insert(axis, normalized);
+        gamepad.connected = true;
+        let previous = gamepad.axes.insert(axis, normalized).unwrap_or(0.0);
+        if normalized.abs() > 0.5 && previous.abs() <= 0.5 {
+            self.note_press(
+                InputDevice::Gamepad(gamepad_slot),
+                InputSource::GamepadAxis(axis),
+            );
+        } else if normalized != 0.0 {
+            self.note_activity(InputDevice::Gamepad(gamepad_slot));
+        }
     }
 
     pub fn set_gamepad_deadzone(&mut self, deadzone: f32) {
@@ -295,6 +481,10 @@ enum BufferedWindowEvent {
     MouseWheel {
         delta: f32,
     },
+    MouseMotion {
+        dx: f32,
+        dy: f32,
+    },
 }
 
 pub struct InputModule {
@@ -382,6 +572,17 @@ impl InputModule {
         Ok(())
     }
 
+    /// Buffers raw device events (relative mouse motion).
+    pub fn handle_device_event(&mut self, event: &DeviceEvent) -> Result<()> {
+        if let DeviceEvent::MouseMotion { delta } = event {
+            self.push_buffered_event(BufferedWindowEvent::MouseMotion {
+                dx: delta.0 as f32,
+                dy: delta.1 as f32,
+            });
+        }
+        Ok(())
+    }
+
     pub fn pump(&mut self, input_state: &mut InputState) -> Result<()> {
         input_state.begin_frame();
         self.buffer_overflow_warned = false;
@@ -402,6 +603,9 @@ impl InputModule {
                 }
                 BufferedWindowEvent::MouseWheel { delta } => {
                     input_state.process_scroll_delta(delta)
+                }
+                BufferedWindowEvent::MouseMotion { dx, dy } => {
+                    input_state.process_mouse_motion(dx, dy)
                 }
             }
         }
@@ -435,11 +639,7 @@ impl InputModule {
                         input_state.process_gamepad_button_input(gamepad_slot, button, false)
                     }
                     EventType::ButtonChanged(button, value, _) => {
-                        input_state.process_gamepad_button_input(
-                            gamepad_slot,
-                            button,
-                            value >= input_state.gamepad_deadzone,
-                        );
+                        input_state.process_gamepad_button_value(gamepad_slot, button, value);
                     }
                     EventType::AxisChanged(axis, value, _) => {
                         input_state.process_gamepad_axis_input(gamepad_slot, axis, value)
@@ -484,18 +684,3 @@ pub fn module_name() -> &'static str {
 
 #[cfg(test)]
 mod tests;
-
-/// Installs the raw [`InputState`] resource into a runtime. The OS event
-/// pump ([`InputModule`]) stays with the windowed host.
-#[derive(Default)]
-pub struct InputPlugin;
-
-impl engine_core::RuntimePlugin for InputPlugin {
-    fn name(&self) -> &'static str {
-        "engine::input"
-    }
-
-    fn build(&self, runtime: &mut engine_core::GameRuntime) {
-        runtime.init_resource::<InputState>();
-    }
-}
