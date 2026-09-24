@@ -900,7 +900,7 @@ impl EditorApp {
             PathBuf::from(asset_server.root().as_str()),
             &config.asset_browser,
         );
-        let mut world = build_editor_world();
+        let mut world = build_editor_world(&asset_server, &project);
         world.spawn(EditorEntityBundle::default());
 
         let mut console = ConsolePanel::default();
@@ -6365,6 +6365,11 @@ fn project_world_to_viewport(
 /// The authoring world carries every standard subsystem's resources and
 /// reflected types (same plugin set as the game runtime), so any component
 /// a game can use is inspectable and serializable in the editor.
-fn build_editor_world() -> World {
-    engine_runtime::build_runtime(&engine_runtime::RuntimeOptions::default()).world
+fn build_editor_world(asset_server: &AssetServer, project: &Project) -> World {
+    engine_runtime::build_runtime(
+        &engine_runtime::RuntimeOptions::default()
+            .with_assets(asset_server.assets().clone())
+            .with_game_settings(project.manifest.game.clone()),
+    )
+    .world
 }

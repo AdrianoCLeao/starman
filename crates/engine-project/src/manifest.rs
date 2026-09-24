@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use engine_core::ProjectId;
 use serde::{Deserialize, Serialize};
 
+use crate::settings::GameSettings;
+
 /// An extensible, order-stable bag of project-level settings. Values are
 /// arbitrary RON so new settings can be introduced without a manifest
 /// version bump; a setting's *meaning* is owned by whatever subsystem reads
@@ -107,6 +109,11 @@ pub struct ProjectManifest {
     pub scripts: ScriptsConfig,
     #[serde(default)]
     pub permissions: PermissionsConfig,
+    /// Typed engine settings (physics layers, input, audio, localization,
+    /// UI, saves, rendering). New in manifest v2.
+    #[serde(default)]
+    pub game: GameSettings,
+    /// Free-form settings owned by project plugins.
     #[serde(default)]
     pub settings: ProjectSettings,
     /// Build target identifiers this project targets (e.g. `"windows"`,
@@ -116,10 +123,10 @@ pub struct ProjectManifest {
 }
 
 impl ProjectManifest {
-    /// The only manifest format version this build knows how to read.
-    /// Bumping this requires a migration path, mirroring scene versioning
-    /// (ADR 0006).
-    pub const CURRENT_VERSION: u32 = 1;
+    /// The manifest format version this build writes. Older versions are
+    /// migrated forward on read (see [`crate::migration`]); a bump requires
+    /// a migration step and a golden fixture (ADR 0006).
+    pub const CURRENT_VERSION: u32 = 2;
 
     pub fn new(name: impl Into<String>, entry_scene: impl Into<String>) -> Self {
         Self {
@@ -130,6 +137,7 @@ impl ProjectManifest {
             plugins: Vec::new(),
             scripts: ScriptsConfig::default(),
             permissions: PermissionsConfig::default(),
+            game: GameSettings::default(),
             settings: ProjectSettings::new(),
             targets: Vec::new(),
         }
@@ -172,7 +180,7 @@ mod tests {
     #[test]
     fn missing_optional_fields_default_to_empty() {
         let source = r#"(
-            version: 1,
+            version: 2,
             id: "00000000-0000-0000-0000-000000000000",
             name: "Minimal",
             entry_scene: "scenes/main.scene.ron",

@@ -8,7 +8,9 @@ description = "Aggregates Starman runtime plugins into the shared gameplay runti
 
 [dependencies]
 bevy_ecs.workspace = true
+engine-assets = { path = "../engine-assets" }
 engine-core = { path = "../engine-core" }
+engine-project = { path = "../engine-project" }
 engine-input = { path = "../engine-input" }
 engine-physics = { path = "../engine-physics" }
 log.workspace = true

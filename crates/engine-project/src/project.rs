@@ -5,6 +5,7 @@ use engine_assets::SceneFile;
 use engine_core::{EngineError, Result};
 
 use crate::manifest::ProjectManifest;
+use crate::migration::{parse_manifest, ParsedManifest};
 use crate::paths::ProjectPaths;
 use crate::validate::ValidationReport;
 
@@ -14,6 +15,9 @@ use crate::validate::ValidationReport;
 pub struct Project {
     pub manifest: ProjectManifest,
     pub paths: ProjectPaths,
+    /// The manifest version this project was migrated from on open, until
+    /// [`Project::persist_migration`] writes the migrated manifest.
+    pub migrated_from: Option<u32>,
 }
 
 /// Options for scaffolding a brand-new project with [`Project::create`].
@@ -40,7 +44,16 @@ impl Project {
     /// the layout it declares (assets directory, entry scene) is incomplete.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
         let paths = ProjectPaths::new(root.as_ref().to_path_buf());
-        let manifest = read_manifest(&paths)?;
+        let parsed = read_manifest(&paths)?;
+        let manifest = parsed.manifest;
+        if let Some(from) = parsed.migrated_from {
+            log::info!(
+                target: "engine::project",
+                "project manifest migrated in memory from v{from} to v{}; \
+                 it is rewritten (with a backup) on the next save",
+                ProjectManifest::CURRENT_VERSION
+            );
+        }
 
         let assets_dir = paths.assets_dir();
         if !assets_dir.is_dir() {
@@ -61,7 +74,37 @@ impl Project {
             });
         }
 
-        Ok(Self { manifest, paths })
+        Ok(Self {
+            manifest,
+            paths,
+            migrated_from: parsed.migrated_from,
+        })
+    }
+
+    /// Writes the manifest back to `project.ron` atomically. When the
+    /// project was migrated on open, the original file is first copied to
+    /// `project.ron.v<N>.bak` (ADR 0006).
+    pub fn save_manifest(&mut self) -> Result<()> {
+        if let Some(from) = self.migrated_from {
+            let manifest_path = self.paths.manifest_file();
+            let backup = manifest_path.with_file_name(format!("project.ron.v{from}.bak"));
+            if !backup.exists() {
+                fs::copy(&manifest_path, &backup).map_err(|error| io_error(&self.paths, error))?;
+            }
+        }
+        write_manifest(&self.paths, &self.manifest)?;
+        self.migrated_from = None;
+        Ok(())
+    }
+
+    /// Persists an on-open migration (no-op when none happened). Returns
+    /// the version migrated from.
+    pub fn persist_migration(&mut self) -> Result<Option<u32>> {
+        let from = self.migrated_from;
+        if from.is_some() {
+            self.save_manifest()?;
+        }
+        Ok(from)
     }
 
     /// Lenient variant of [`Self::open`]: collects every problem it finds
@@ -71,7 +114,16 @@ impl Project {
         let mut report = ValidationReport::new();
 
         let manifest = match read_manifest(&paths) {
-            Ok(manifest) => Some(manifest),
+            Ok(parsed) => {
+                if let Some(from) = parsed.migrated_from {
+                    report.push_warning(format!(
+                        "project manifest is v{from}; it will be migrated to v{} (with a backup) \
+                         on the next save or `starman migrate`",
+                        ProjectManifest::CURRENT_VERSION
+                    ));
+                }
+                Some(parsed.manifest)
+            }
             Err(error) => {
                 report.push_error(error.to_string());
                 None
@@ -95,6 +147,7 @@ impl Project {
             }
 
             validate_scripts_and_plugins(&paths, manifest, &mut report);
+            validate_game_settings(&paths, manifest, &mut report);
         }
 
         for (label, dir) in [
@@ -144,11 +197,15 @@ impl Project {
         let manifest = ProjectManifest::new(options.name, options.entry_scene);
         write_manifest(&paths, &manifest)?;
 
-        Ok(Self { manifest, paths })
+        Ok(Self {
+            manifest,
+            paths,
+            migrated_from: None,
+        })
     }
 }
 
-fn read_manifest(paths: &ProjectPaths) -> Result<ProjectManifest> {
+fn read_manifest(paths: &ProjectPaths) -> Result<ParsedManifest> {
     let manifest_path = paths.manifest_file();
     let source =
         fs::read_to_string(&manifest_path).map_err(|error| EngineError::InvalidProject {
@@ -159,27 +216,43 @@ fn read_manifest(paths: &ProjectPaths) -> Result<ProjectManifest> {
             ),
         })?;
 
-    let manifest: ProjectManifest =
-        ron::from_str(&source).map_err(|error| EngineError::InvalidProject {
-            path: paths.root().display().to_string(),
-            reason: format!(
-                "failed to parse manifest '{}': {error}",
-                manifest_path.display()
-            ),
-        })?;
+    parse_manifest(&source).map_err(|reason| EngineError::InvalidProject {
+        path: paths.root().display().to_string(),
+        reason: format!("manifest '{}': {reason}", manifest_path.display()),
+    })
+}
 
-    if manifest.version != ProjectManifest::CURRENT_VERSION {
-        return Err(EngineError::InvalidProject {
-            path: paths.root().display().to_string(),
-            reason: format!(
-                "unsupported project manifest version {}; expected {}",
-                manifest.version,
-                ProjectManifest::CURRENT_VERSION
-            ),
-        });
+fn validate_game_settings(
+    paths: &ProjectPaths,
+    manifest: &ProjectManifest,
+    report: &mut ValidationReport,
+) {
+    manifest.game.validate(report);
+    for (field, asset) in manifest.game.asset_refs() {
+        let (file, _) = asset.split_path();
+        if file.is_empty() {
+            if asset.id.trim().is_empty() {
+                report.push_error(format!("{field} is set but empty"));
+            }
+            continue;
+        }
+        if !paths.resolve_asset_relative(file).is_file() {
+            report.push_error(format!(
+                "{field} references '{file}', which does not exist under assets/"
+            ));
+        }
     }
-
-    Ok(manifest)
+    let localization_root = paths.resolve_asset_relative(&manifest.game.localization.root);
+    if localization_root.is_dir() {
+        for locale in &manifest.game.localization.supported {
+            if !localization_root.join(locale).is_dir() {
+                report.push_warning(format!(
+                    "locale '{locale}' has no directory '{}'",
+                    localization_root.join(locale).display()
+                ));
+            }
+        }
+    }
 }
 
 fn validate_scripts_and_plugins(

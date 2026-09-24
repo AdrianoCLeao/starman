@@ -29,4 +29,6 @@ pub enum Command {
     Run { path: PathBuf },
     /// Validate the project and headlessly load its entry scene.
     Test { path: PathBuf },
+    /// Persist pending format migrations (with backups).
+    Migrate { path: PathBuf },
 }

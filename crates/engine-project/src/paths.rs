@@ -60,11 +60,50 @@ impl ProjectPaths {
         self.root.join("build")
     }
 
+    /// Save games written while developing (editor play, `starman run`).
+    /// Distributed builds write to [`user_data_dir`] instead.
+    pub fn saves_dir(&self) -> PathBuf {
+        self.root.join("saves")
+    }
+
+    /// Per-user settings while developing (input rebinding, volumes); kept
+    /// under the generated directory so they are never committed.
+    pub fn dev_user_settings_dir(&self) -> PathBuf {
+        self.generated_dir().join("user")
+    }
+
     /// Resolves a scene path declared in the manifest (relative to
     /// [`Self::assets_dir`]) to an absolute path.
     pub fn resolve_asset_relative(&self, relative: &str) -> PathBuf {
         self.assets_dir().join(relative)
     }
+}
+
+/// The per-user, per-project data directory of a *distributed* game:
+/// `<OS data dir>/Starman/<project-slug>-<id prefix>/`. Saves live in
+/// `saves/` and user settings in `settings/` below it.
+pub fn user_data_dir(project_name: &str, project_id: &str) -> Option<PathBuf> {
+    let slug: String = project_name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .split('-')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let prefix: String = project_id.chars().filter(|c| *c != '-').take(8).collect();
+    let slug = if slug.is_empty() {
+        "game".to_owned()
+    } else {
+        slug
+    };
+    dirs::data_dir().map(|dir| dir.join("Starman").join(format!("{slug}-{prefix}")))
 }
 
 #[cfg(test)]
@@ -88,6 +127,19 @@ mod tests {
             PathBuf::from("/tmp/my-project/.starman/diagnostics")
         );
         assert_eq!(paths.build_dir(), PathBuf::from("/tmp/my-project/build"));
+    }
+
+    #[test]
+    fn user_data_dir_is_slugged_and_stable() {
+        if let Some(dir) = user_data_dir("My Cool Game!", "bedc6c7d-6817-47c9") {
+            assert!(
+                dir.ends_with("Starman/my-cool-game-bedc6c7d"),
+                "{}",
+                dir.display()
+            );
+        }
+        let paths = ProjectPaths::new("/tmp/my-project");
+        assert_eq!(paths.saves_dir(), PathBuf::from("/tmp/my-project/saves"));
     }
 
     #[test]

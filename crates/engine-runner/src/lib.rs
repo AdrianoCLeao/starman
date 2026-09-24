@@ -98,6 +98,7 @@ pub struct RunnerModules {
     control_rx: Option<Receiver<RunnerControlCommand>>,
     stop_requested: bool,
     extensibility: Option<ExtensibilityHost>,
+    game_settings: Option<engine_project::GameSettings>,
 }
 
 impl RunnerModules {
@@ -113,9 +114,11 @@ impl RunnerModules {
             assets.asset_server_mut().attach_database(database);
         }
 
+        let mut game_settings = None;
         let extensibility = if let Some(root) = project_root {
             match Project::open(&root) {
                 Ok(project) => {
+                    game_settings = Some(project.manifest.game.clone());
                     let mut host =
                         ExtensibilityHost::bootstrap(project.paths.root(), &project.manifest)?;
                     if let Err(error) = host.load_lua_entry() {
@@ -146,6 +149,7 @@ impl RunnerModules {
             control_rx,
             stop_requested: false,
             extensibility,
+            game_settings,
         })
     }
 
@@ -379,7 +383,12 @@ fn configure_runner_world(engine: &mut Engine<RunnerModules>) {
     engine.modules.input.configure_hardening(hardening);
     engine.modules.assets.configure_hardening(hardening);
 
+    let assets = engine.modules.assets.asset_server().assets().clone();
+    engine.runtime.insert_resource(assets);
     engine_runtime::install_default_plugins(&mut engine.runtime);
+    if let Some(settings) = engine.modules.game_settings.clone() {
+        engine_runtime::apply_game_settings(&mut engine.runtime, &settings);
+    }
 }
 
 /// An assembled, scene-loaded [`Engine`], not yet running. Entirely
@@ -404,6 +413,9 @@ impl PreparedRun {
 
         impl engine_core::FrameHooks for HeadlessHooks<'_> {
             fn begin_frame(&mut self, world: &mut World) -> Result<()> {
+                // Deterministic headless runs finish every requested load
+                // before the frame's systems observe it.
+                self.0.assets.asset_server_mut().update_blocking();
                 self.0.flush_input(world)
             }
         }

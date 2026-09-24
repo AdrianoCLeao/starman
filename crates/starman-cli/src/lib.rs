@@ -42,6 +42,7 @@ pub fn dispatch(cli: Cli) -> Result<String, CliError> {
             commands::run::run(path)?;
             Ok("Runner exited cleanly.".to_owned())
         }
+        Command::Migrate { path } => Ok(commands::migrate::run(path)?.message()),
         Command::Test { path } => {
             let outcome = commands::test::run(path)?;
             Ok(format!(

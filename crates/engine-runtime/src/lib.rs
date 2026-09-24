@@ -8,25 +8,48 @@
 
 pub use engine_core::{GameRuntime, RuntimePlugin};
 
+use engine_assets::Assets;
 use engine_core::DEFAULT_FIXED_TIMESTEP_SECONDS;
+use engine_project::GameSettings;
 
 /// Options for [`build_runtime`].
 #[derive(Clone, Debug)]
 pub struct RuntimeOptions {
     pub fixed_timestep_seconds: f64,
+    /// The typed-asset store of the host's `AssetServer`. Inserted before
+    /// plugins install so their loaders register into the store the server
+    /// actually fills. `None` creates a fresh, server-less store.
+    pub assets: Option<Assets>,
+    /// Project game settings to apply after the plugins are installed.
+    pub game_settings: Option<GameSettings>,
 }
 
 impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             fixed_timestep_seconds: DEFAULT_FIXED_TIMESTEP_SECONDS,
+            assets: None,
+            game_settings: None,
         }
+    }
+}
+
+impl RuntimeOptions {
+    pub fn with_assets(mut self, assets: Assets) -> Self {
+        self.assets = Some(assets);
+        self
+    }
+
+    pub fn with_game_settings(mut self, settings: GameSettings) -> Self {
+        self.game_settings = Some(settings);
+        self
     }
 }
 
 /// The engine's standard plugin set, in installation order.
 pub fn default_plugins() -> Vec<Box<dyn RuntimePlugin>> {
     vec![
+        Box::new(engine_assets::AssetsPlugin),
         Box::new(engine_input::InputPlugin),
         Box::new(engine_physics::PhysicsPlugin),
     ]
@@ -40,9 +63,26 @@ pub fn install_default_plugins(runtime: &mut GameRuntime) {
 /// Builds a runtime with every standard subsystem installed.
 pub fn build_runtime(options: &RuntimeOptions) -> GameRuntime {
     let mut runtime = GameRuntime::with_fixed_timestep(options.fixed_timestep_seconds);
+    if let Some(assets) = &options.assets {
+        runtime.insert_resource(assets.clone());
+    }
     install_default_plugins(&mut runtime);
+    if let Some(settings) = &options.game_settings {
+        apply_game_settings(&mut runtime, settings);
+    }
     runtime
 }
+
+/// Pushes the project's typed game settings into the subsystems' runtime
+/// resources. Safe to call again after the settings change (editor).
+pub fn apply_game_settings(runtime: &mut GameRuntime, settings: &GameSettings) {
+    runtime.insert_resource(ProjectGameSettings(settings.clone()));
+}
+
+/// The project's game settings as last applied, for systems and tools that
+/// need the raw values.
+#[derive(bevy_ecs::system::Resource, Clone, Debug, Default)]
+pub struct ProjectGameSettings(pub GameSettings);
 
 #[cfg(test)]
 mod tests {

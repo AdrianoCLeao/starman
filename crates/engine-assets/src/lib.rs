@@ -7,7 +7,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-pub use loaders::extract_gltf_materials;
+pub use loaders::{decode_gltf_meshes, extract_gltf_materials};
 use loaders::{
     load_material_payload, load_mesh_payload_merged, load_mesh_payloads, load_texture_payload,
 };
@@ -15,11 +15,31 @@ use pathing::{
     resolve_disk_path as resolve_asset_disk_path, to_asset_path, to_relative_asset_path,
 };
 
+mod builtin;
 pub mod import;
 mod loaders;
 mod pathing;
 pub mod scene;
+mod server_typed;
+pub mod typed;
+
+pub use builtin::{AssetsPlugin, MaterialLoader, MeshLoader, TextureLoader};
 pub mod watch;
+
+pub use server_typed::AssetUpdateReport;
+pub use typed::{
+    split_sub_key, Asset, AssetLoader, AssetRef, AssetSummary, Assets, LoadContext, LoadState,
+    ResolvedSource, StoreStats,
+};
+
+static NEXT_ASSET_ID: AtomicU64 = AtomicU64::new(1);
+
+/// Allocates a process-unique [`AssetId`]. Legacy (texture/mesh/material)
+/// and typed handles share this id space, so GPU caches keyed by id never
+/// collide across asset kinds.
+pub(crate) fn next_asset_id() -> AssetId {
+    AssetId(NEXT_ASSET_ID.fetch_add(1, Ordering::Relaxed))
+}
 
 pub use import::{AssetDatabase, AssetMeta, ImportSummary};
 pub use scene::{
@@ -51,11 +71,41 @@ impl AssetId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Handle<T> {
     id: AssetId,
     generation: u32,
     marker: PhantomData<fn() -> T>,
+}
+
+// Manual impls: derives would require `T: Clone/Eq/...`, but a handle is
+// plain data regardless of the asset type it points at.
+impl<T> Clone for Handle<T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Handle<T> {}
+
+impl<T> PartialEq for Handle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && self.generation == other.generation
+    }
+}
+
+impl<T> Eq for Handle<T> {}
+
+impl<T> std::hash::Hash for Handle<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+        self.generation.hash(state);
+    }
+}
+
+impl<T> std::fmt::Debug for Handle<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Handle({}#{})", self.id.0, self.generation)
+    }
 }
 
 impl<T> Handle<T> {
@@ -211,6 +261,17 @@ pub struct MeshVertex {
     pub uv: [f32; 2],
 }
 
+/// A contiguous index range drawn with one material.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubMesh {
+    pub first_index: u32,
+    pub index_count: u32,
+    /// Material index inside the source file (glTF), if any.
+    pub material: Option<usize>,
+}
+
+/// CPU-side mesh payload. Optional vertex streams are either empty or
+/// exactly `vertices.len()` long.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MeshData {
     pub name: String,
@@ -220,9 +281,113 @@ pub struct MeshData {
     pub aabb_min: [f32; 3],
     #[serde(default)]
     pub aabb_max: [f32; 3],
+    /// Per-vertex tangents (xyz, w = bitangent sign), glTF convention.
+    #[serde(default)]
+    pub tangents: Vec<[f32; 4]>,
+    /// Up to four joint indices per vertex (into the bound skin's joints).
+    #[serde(default)]
+    pub joints: Vec<[u16; 4]>,
+    /// Normalized weights matching `joints`.
+    #[serde(default)]
+    pub weights: Vec<[f32; 4]>,
+    /// Skin index inside the source file this mesh is bound to.
+    #[serde(default)]
+    pub skin: Option<usize>,
+    /// Material ranges; empty means one range covering every index.
+    #[serde(default)]
+    pub submeshes: Vec<SubMesh>,
 }
 
 impl MeshData {
+    pub fn new(name: impl Into<String>, vertices: Vec<MeshVertex>, indices: Vec<u32>) -> Self {
+        let mut mesh = Self {
+            name: name.into(),
+            vertices,
+            indices,
+            aabb_min: [0.0; 3],
+            aabb_max: [0.0; 3],
+            tangents: Vec::new(),
+            joints: Vec::new(),
+            weights: Vec::new(),
+            skin: None,
+            submeshes: Vec::new(),
+        };
+        mesh.recompute_bounds();
+        mesh
+    }
+
+    /// Whether the mesh carries complete skinning streams.
+    pub fn is_skinned(&self) -> bool {
+        !self.vertices.is_empty()
+            && self.joints.len() == self.vertices.len()
+            && self.weights.len() == self.vertices.len()
+    }
+
+    pub fn has_tangents(&self) -> bool {
+        !self.vertices.is_empty() && self.tangents.len() == self.vertices.len()
+    }
+
+    /// Generates per-vertex tangents from positions, normals and UVs
+    /// (per-triangle accumulation, Gram-Schmidt orthogonalization and
+    /// handedness in `w`). Degenerate UVs fall back to an arbitrary
+    /// tangent perpendicular to the normal.
+    pub fn generate_tangents(&mut self) {
+        let count = self.vertices.len();
+        let mut tan = vec![[0.0f32; 3]; count];
+        let mut bitan = vec![[0.0f32; 3]; count];
+        for triangle in self.indices.chunks_exact(3) {
+            let [i0, i1, i2] = [
+                triangle[0] as usize,
+                triangle[1] as usize,
+                triangle[2] as usize,
+            ];
+            if i0 >= count || i1 >= count || i2 >= count {
+                continue;
+            }
+            let (v0, v1, v2) = (&self.vertices[i0], &self.vertices[i1], &self.vertices[i2]);
+            let e1 = sub3(v1.position, v0.position);
+            let e2 = sub3(v2.position, v0.position);
+            let du1 = v1.uv[0] - v0.uv[0];
+            let dv1 = v1.uv[1] - v0.uv[1];
+            let du2 = v2.uv[0] - v0.uv[0];
+            let dv2 = v2.uv[1] - v0.uv[1];
+            let det = du1 * dv2 - du2 * dv1;
+            if det.abs() < 1e-12 {
+                continue;
+            }
+            let r = 1.0 / det;
+            let t = scale3(sub3(scale3(e1, dv2), scale3(e2, dv1)), r);
+            let b = scale3(sub3(scale3(e2, du1), scale3(e1, du2)), r);
+            for index in [i0, i1, i2] {
+                tan[index] = add3(tan[index], t);
+                bitan[index] = add3(bitan[index], b);
+            }
+        }
+        self.tangents = (0..count)
+            .map(|index| {
+                let n = normalize3(self.vertices[index].normal);
+                let t = tan[index];
+                // Gram-Schmidt.
+                let mut ortho = sub3(t, scale3(n, dot3(n, t)));
+                if dot3(ortho, ortho) < 1e-12 {
+                    let axis = if n[0].abs() < 0.9 {
+                        [1.0, 0.0, 0.0]
+                    } else {
+                        [0.0, 1.0, 0.0]
+                    };
+                    ortho = sub3(axis, scale3(n, dot3(n, axis)));
+                }
+                let ortho = normalize3(ortho);
+                let handedness = if dot3(cross3(n, ortho), bitan[index]) < 0.0 {
+                    -1.0
+                } else {
+                    1.0
+                };
+                [ortho[0], ortho[1], ortho[2], handedness]
+            })
+            .collect();
+    }
+
     pub fn recompute_bounds(&mut self) {
         if self.vertices.is_empty() {
             self.aabb_min = [0.0; 3];
@@ -253,6 +418,39 @@ impl MeshData {
             r2 = r2.max(dx * dx + dy * dy + dz * dz);
         }
         r2.sqrt()
+    }
+}
+
+fn sub3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn add3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+}
+
+fn scale3(a: [f32; 3], s: f32) -> [f32; 3] {
+    [a[0] * s, a[1] * s, a[2] * s]
+}
+
+fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn normalize3(a: [f32; 3]) -> [f32; 3] {
+    let len = dot3(a, a).sqrt();
+    if len < 1e-12 {
+        [0.0, 1.0, 0.0]
+    } else {
+        scale3(a, 1.0 / len)
     }
 }
 
@@ -323,8 +521,9 @@ impl Default for MaterialData {
 pub struct AssetServer {
     root: AssetPath,
     hardening: HardeningConfig,
-    next_id: AtomicU64,
     next_revision: u64,
+    assets: Assets,
+    workers: server_typed::LoadWorkers,
     textures: HandleRegistry,
     meshes: HandleRegistry,
     materials: HandleRegistry,
@@ -358,12 +557,14 @@ pub struct HotReloadReport {
     pub removed: Vec<PathBuf>,
     /// Assets whose reload failed; their previous payload is kept.
     pub failed: Vec<PathBuf>,
+    /// Typed assets (see [`typed`]) whose load or reload finished.
+    pub assets: AssetUpdateReport,
 }
 
 impl HotReloadReport {
     /// Number of assets whose payload was successfully reloaded.
     pub fn reloaded_count(&self) -> usize {
-        self.textures.len() + self.meshes.len() + self.materials.len()
+        self.textures.len() + self.meshes.len() + self.materials.len() + self.assets.loaded.len()
     }
 }
 
@@ -375,8 +576,9 @@ impl AssetServer {
         Self {
             root,
             hardening: HardeningConfig::default(),
-            next_id: AtomicU64::new(1),
             next_revision: 1,
+            assets: Assets::new(),
+            workers: server_typed::LoadWorkers::new(),
             textures: HandleRegistry::default(),
             meshes: HandleRegistry::default(),
             materials: HandleRegistry::default(),
@@ -395,6 +597,74 @@ impl AssetServer {
 
     pub fn root(&self) -> &AssetPath {
         &self.root
+    }
+
+    /// The shared typed-asset store. Insert a clone into the ECS world
+    /// (hosts do this before installing runtime plugins) so systems and
+    /// plugins see the same storage this server fills.
+    pub fn assets(&self) -> &Assets {
+        &self.assets
+    }
+
+    /// Adopts an existing typed-asset store (e.g. one a runtime created and
+    /// plugins already registered loaders into).
+    pub fn set_assets(&mut self, assets: Assets) {
+        self.assets = assets;
+    }
+
+    /// Resolves pending typed requests, dispatches their loads to worker
+    /// threads and stores finished payloads. Never blocks; call once per
+    /// frame.
+    pub fn update(&mut self) -> AssetUpdateReport {
+        server_typed::process(
+            &self.assets,
+            &mut self.workers,
+            &self.root,
+            self.database.as_mut(),
+            &self.hardening,
+            false,
+        )
+    }
+
+    /// Like [`Self::update`] but decodes on the calling thread and returns
+    /// only when no typed load is in flight. Deterministic headless runs,
+    /// tools and tests use this.
+    pub fn update_blocking(&mut self) -> AssetUpdateReport {
+        let mut report = server_typed::process(
+            &self.assets,
+            &mut self.workers,
+            &self.root,
+            self.database.as_mut(),
+            &self.hardening,
+            true,
+        );
+        let finished = server_typed::collect_finished(&self.assets, &mut self.workers);
+        report.loaded.extend(finished.loaded);
+        report.failed.extend(finished.failed);
+        report
+    }
+
+    /// Requests `relative_path` (`file` or `file#sub_key`) and loads it
+    /// synchronously.
+    pub fn load_blocking<A: Asset>(&mut self, relative_path: &str) -> Result<Handle<A>> {
+        self.load_ref_blocking(&AssetRef::from_path(relative_path))
+    }
+
+    /// Requests `asset` and loads it synchronously.
+    pub fn load_ref_blocking<A: Asset>(&mut self, asset: &AssetRef) -> Result<Handle<A>> {
+        let handle = self.assets.request::<A>(asset);
+        self.update_blocking();
+        match self.assets.state(handle) {
+            Some(LoadState::Loaded) => Ok(handle),
+            Some(LoadState::Failed(reason)) => Err(EngineError::AssetLoad {
+                path: asset.to_string(),
+                reason,
+            }),
+            other => Err(EngineError::AssetLoad {
+                path: asset.to_string(),
+                reason: format!("load did not complete ({other:?})"),
+            }),
+        }
     }
 
     pub fn configure_hardening(&mut self, hardening: HardeningConfig) {
@@ -485,7 +755,7 @@ impl AssetServer {
     pub fn load_texture_handle(&mut self, relative_path: &str) -> Result<TextureHandle> {
         let disk_path = self.resolve_disk_path(relative_path)?;
         let path = to_asset_path(&disk_path);
-        let handle = self.textures.get_or_create(path.clone(), &self.next_id);
+        let handle = self.textures.get_or_create(path.clone(), &NEXT_ASSET_ID);
 
         match load_texture_payload(&disk_path, &self.hardening) {
             Ok(mut payload) => {
@@ -527,7 +797,7 @@ impl AssetServer {
     pub fn load_mesh_handle(&mut self, relative_path: &str) -> Result<MeshHandle> {
         let disk_path = self.resolve_disk_path(relative_path)?;
         let path = to_asset_path(&disk_path);
-        let handle = self.meshes.get_or_create(path.clone(), &self.next_id);
+        let handle = self.meshes.get_or_create(path.clone(), &NEXT_ASSET_ID);
 
         match load_mesh_payload_merged(&disk_path, &self.hardening) {
             Ok(payload) => {
@@ -606,7 +876,7 @@ impl AssetServer {
         let relative_path = self.resolve_relative_path_for_id(source_id)?;
         let disk_path = self.resolve_disk_path(&relative_path)?;
         let registry_path = mesh_sub_asset_registry_path(&disk_path, mesh_index);
-        let handle = self.meshes.get_or_create(registry_path, &self.next_id);
+        let handle = self.meshes.get_or_create(registry_path, &NEXT_ASSET_ID);
 
         let payloads = match load_mesh_payloads(&disk_path, &self.hardening) {
             Ok(payloads) => payloads,
@@ -615,7 +885,11 @@ impl AssetServer {
                 return Err(error);
             }
         };
-        let Some(payload) = payloads.into_iter().nth(mesh_index) else {
+        let Some(payload) = payloads
+            .into_iter()
+            .nth(mesh_index)
+            .filter(|payload| !payload.vertices.is_empty())
+        else {
             self.meshes.mark_failed(handle);
             return Err(EngineError::AssetLoad {
                 path: relative_path,
@@ -643,7 +917,7 @@ impl AssetServer {
     pub fn load_material_handle(&mut self, relative_path: &str) -> Result<MaterialHandle> {
         let disk_path = self.resolve_disk_path(relative_path)?;
         let path = to_asset_path(&disk_path);
-        let handle = self.materials.get_or_create(path.clone(), &self.next_id);
+        let handle = self.materials.get_or_create(path.clone(), &NEXT_ASSET_ID);
 
         let (payload, state_ok) = if disk_path.is_file() {
             match load_material_payload(&disk_path) {
@@ -764,6 +1038,24 @@ impl AssetServer {
     pub fn poll_hot_reload(&mut self) -> HotReloadReport {
         let changes = self.watcher.poll(self.database.as_mut());
         let mut report = HotReloadReport::default();
+
+        for change in &changes {
+            if matches!(
+                change,
+                AssetChange::Removed(_) | AssetChange::Script(_) | AssetChange::Plugin(_)
+            ) {
+                continue;
+            }
+            let disk_path = server_typed::normalized(change.path());
+            server_typed::reload_disk_path(
+                &self.assets,
+                &mut self.workers,
+                &self.hardening,
+                &disk_path,
+                false,
+            );
+        }
+        report.assets = self.update();
 
         for change in changes {
             match change {

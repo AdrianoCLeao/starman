@@ -9,6 +9,7 @@ license.workspace = true
 engine-assets = { path = "../engine-assets" }
 engine-core = { path = "../engine-core" }
 engine-plugin = { path = "../engine-plugin" }
+dirs.workspace = true
 log.workspace = true
 ron.workspace = true
 serde.workspace = true

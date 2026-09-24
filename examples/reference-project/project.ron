@@ -1,5 +1,5 @@
 (
-    version: 1,
+    version: 2,
     id: "bedc6c7d-6817-47c9-857b-0279e69ea682",
     name: "Starman Reference Project",
     entry_scene: "scenes/level.scene.ron",
@@ -12,12 +12,54 @@
     ],
     scripts: (
         entry: Some("scripts/main.lua"),
-        roots: ["scripts/"],
+        roots: [
+            "scripts/",
+        ],
     ),
     permissions: (
-        filesystem: ["assets/**", "scripts/**", "saves/**"],
+        filesystem: [
+            "assets/**",
+            "scripts/**",
+            "saves/**",
+        ],
         process: false,
         network: false,
+    ),
+    game: (
+        physics: (
+            gravity: (0.0, -9.81, 0.0),
+            layers: [
+                "default",
+            ],
+            collision_matrix: [],
+        ),
+        input: (
+            actions: None,
+            max_local_players: 1,
+        ),
+        audio: (
+            mixer: None,
+        ),
+        localization: (
+            default_locale: "en",
+            supported: [
+                "en",
+            ],
+            root: "localization",
+        ),
+        ui: (
+            reference_resolution: (1920, 1080),
+            scale_mode: MatchHeight,
+            default_font: None,
+        ),
+        save: (
+            slots: 3,
+            autosave: true,
+            autosave_interval_seconds: 300.0,
+        ),
+        rendering: (
+            default_quality: "High",
+        ),
     ),
     settings: {},
     targets: [],

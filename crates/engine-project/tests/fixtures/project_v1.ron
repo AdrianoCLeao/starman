@@ -1,0 +1,26 @@
+(
+    version: 1,
+    id: "7a4d2c6e-1f3b-4a5c-9d8e-0b1c2d3e4f50",
+    name: "Fixture v1",
+    entry_scene: "scenes/main.scene.ron",
+    plugins: [
+        (
+            name: "fixture_plugin",
+            version_req: Some("^0.1"),
+            path: Some("plugins/fixture_plugin"),
+        ),
+    ],
+    scripts: (
+        entry: Some("scripts/main.lua"),
+        roots: ["scripts/"],
+    ),
+    permissions: (
+        filesystem: ["assets/**", "scripts/**", "saves/**"],
+        process: false,
+        network: false,
+    ),
+    settings: {
+        "custom_plugin_setting": 42,
+    },
+    targets: [],
+)

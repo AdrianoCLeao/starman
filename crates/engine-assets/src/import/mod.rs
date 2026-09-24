@@ -15,5 +15,5 @@ pub(crate) use cache::ImportedCache;
 pub(crate) use database::ImportOutcome;
 pub use database::{AssetDatabase, ImportSummary};
 pub(crate) use hash::hash_bytes;
-pub use meta::AssetMeta;
 pub(crate) use meta::META_SUFFIX;
+pub use meta::{default_importer_key_for, importer_version_for, AssetMeta, SubAssetRecord};

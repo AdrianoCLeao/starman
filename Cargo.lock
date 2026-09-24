@@ -1710,6 +1710,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bevy_ecs",
+ "bevy_reflect",
  "blake3",
  "engine-core",
  "engine-physics",
@@ -1720,6 +1721,7 @@ dependencies = [
  "notify",
  "ron",
  "serde",
+ "uuid",
 ]
 
 [[package]]
@@ -1878,6 +1880,7 @@ dependencies = [
 name = "engine-project"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "engine-assets",
  "engine-core",
  "engine-plugin",
@@ -1947,9 +1950,11 @@ name = "engine-runtime"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "engine-assets",
  "engine-core",
  "engine-input",
  "engine-physics",
+ "engine-project",
  "log",
 ]
 

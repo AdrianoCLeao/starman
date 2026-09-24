@@ -18,8 +18,8 @@ use super::cache::ImportedCache;
 use super::dependency_graph::DependencyGraph;
 use super::hash::hash_bytes;
 use super::meta::{
-    default_importer_key_for, meta_path_for, read_meta, source_path_for_meta, write_meta,
-    AssetMeta, SubAssetRecord, META_SUFFIX,
+    default_importer_key_for, importer_version_for, meta_path_for, read_meta, source_path_for_meta,
+    write_meta, AssetMeta, SubAssetRecord, META_SUFFIX,
 };
 
 /// The result of the heavy, off-thread half of a reimport: the file was
@@ -174,13 +174,16 @@ impl AssetDatabase {
         };
 
         let importer = default_importer_key_for(&source_path).to_owned();
-        let up_to_date = existing_meta
-            .as_ref()
-            .is_some_and(|meta| meta.content_hash == content_hash && meta.id == id);
+        let importer_version = importer_version_for(&importer);
+        let up_to_date = existing_meta.as_ref().is_some_and(|meta| {
+            meta.content_hash == content_hash
+                && meta.id == id
+                && meta.importer_version >= importer_version
+        });
 
         if !up_to_date {
             let sub_assets = if importer == "mesh" {
-                extract_mesh_sub_assets(&source_path, id).unwrap_or_else(|error| {
+                extract_gltf_sub_assets(&source_path, id).unwrap_or_else(|error| {
                     log::warn!(
                         target: "engine::assets",
                         "failed to enumerate sub-assets of '{}': {}",
@@ -200,6 +203,7 @@ impl AssetDatabase {
                 dependencies: dependencies.clone(),
                 content_hash: content_hash.clone(),
                 sub_assets,
+                importer_version,
             };
             write_meta(&meta_path, &meta)?;
             for sub_asset in &meta.sub_assets {
@@ -269,11 +273,9 @@ impl AssetDatabase {
             return Ok(AppliedImport::default());
         }
 
-        let mut updated = meta.clone();
-        updated.content_hash = outcome.content_hash.clone();
-        let source_path = self.assets_root.join(&outcome.relative_path);
-        write_meta(&meta_path_for(&source_path), &updated)?;
-        self.metas.insert(id, updated);
+        // Content changed: run the full import so derived metadata (e.g.
+        // glTF sub-assets) is recomputed, not just the hash.
+        self.ensure_imported(&outcome.relative_path)?;
 
         Ok(AppliedImport {
             changed: true,
@@ -452,11 +454,13 @@ impl ImportSummary {
     }
 }
 
-/// Enumerates the meshes in a glTF/glb file as sub-asset records, without
-/// decoding vertex buffers (uses `Gltf::open`, which only parses the JSON
-/// document, not `gltf::import`, which would also eagerly load every
-/// buffer — cheap enough to call on every reimport of a mesh source).
-fn extract_mesh_sub_assets(
+/// Enumerates the meshes, skins and animations in a glTF/glb file as
+/// sub-asset records (`mesh:i`, `skin:i`, `anim:i`), without decoding
+/// buffers (uses `Gltf::open`, which only parses the JSON document, not
+/// `gltf::import` — cheap enough to call on every reimport). Keys are
+/// index-based and ids derive from them, so they stay stable across
+/// reimports of the same file layout.
+fn extract_gltf_sub_assets(
     source_path: &Path,
     parent: SourceAssetId,
 ) -> Result<Vec<SubAssetRecord>> {
@@ -467,19 +471,28 @@ fn extract_mesh_sub_assets(
         })?
         .document;
 
-    let records = document
+    let record = |key: String, label: Option<&str>| SubAssetRecord {
+        id: SubAssetId::derive(parent, &key),
+        key,
+        label: label.map(str::to_owned),
+    };
+    let mut records: Vec<SubAssetRecord> = document
         .meshes()
         .enumerate()
-        .map(|(index, mesh)| {
-            let key = format!("mesh:{index}");
-            let id = SubAssetId::derive(parent, &key);
-            SubAssetRecord {
-                id,
-                key,
-                label: mesh.name().map(str::to_owned),
-            }
-        })
+        .map(|(index, mesh)| record(format!("mesh:{index}"), mesh.name()))
         .collect();
+    records.extend(
+        document
+            .skins()
+            .enumerate()
+            .map(|(index, skin)| record(format!("skin:{index}"), skin.name())),
+    );
+    records.extend(
+        document
+            .animations()
+            .enumerate()
+            .map(|(index, animation)| record(format!("anim:{index}"), animation.name())),
+    );
 
     Ok(records)
 }

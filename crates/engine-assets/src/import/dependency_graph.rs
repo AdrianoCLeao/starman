@@ -15,23 +15,20 @@ pub(crate) struct DependencyGraph {
 impl DependencyGraph {
     /// Replaces every dependency edge previously recorded for `asset` with
     /// `dependencies`. Safe to call repeatedly as an asset is re-imported.
+    ///
+    /// Only the edges *from* `asset` are replaced; assets that depend on
+    /// `asset` keep their edges (re-importing a texture must not forget the
+    /// materials that use it).
     pub fn set_dependencies(&mut self, asset: SourceAssetId, dependencies: &[SourceAssetId]) {
-        self.remove_asset(asset);
+        for dependents in self.dependents.values_mut() {
+            dependents.remove(&asset);
+        }
         for dependency in dependencies {
             self.dependents
                 .entry(*dependency)
                 .or_default()
                 .insert(asset);
         }
-    }
-
-    /// Removes every edge involving `asset`, whether as a dependency or a
-    /// dependent. Used when an asset is deleted or fully re-scanned.
-    pub fn remove_asset(&mut self, asset: SourceAssetId) {
-        for dependents in self.dependents.values_mut() {
-            dependents.remove(&asset);
-        }
-        self.dependents.remove(&asset);
     }
 
     /// The assets that directly depend on `asset`.

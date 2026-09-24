@@ -50,7 +50,7 @@ impl ValidationReport {
         });
     }
 
-    pub(crate) fn push_warning(&mut self, message: impl Into<String>) {
+    pub fn push_warning(&mut self, message: impl Into<String>) {
         self.issues.push(ValidationIssue {
             severity: Severity::Warning,
             message: message.into(),
