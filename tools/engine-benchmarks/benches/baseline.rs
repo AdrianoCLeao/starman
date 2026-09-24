@@ -326,7 +326,9 @@ criterion_main!(baseline);
 
 fn bench_frustum_and_clusters(c: &mut Criterion) {
     use engine_math::{Mat4, Vec3};
-    use engine_render::{cull_lights_cpu, Aabb, CapabilityTier, Frustum, GpuLight};
+    use engine_render::{
+        cascade_split_depths, cull_lights_cpu, Aabb, CapabilityTier, Frustum, GpuLight,
+    };
 
     c.bench_function("frustum_aabb_2000", |b| {
         let frustum = Frustum::from_view_proj(Mat4::perspective_rh(1.0, 1.6, 0.1, 500.0));
@@ -360,5 +362,9 @@ fn bench_frustum_and_clusters(c: &mut Criterion) {
             })
             .collect();
         b.iter(|| cull_lights_cpu(&lights, [0.0; 3], CapabilityTier::Tier1).cluster_count());
+    });
+
+    c.bench_function("cascade_split_4", |b| {
+        b.iter(|| cascade_split_depths(0.1, 200.0, 4, 0.5));
     });
 }

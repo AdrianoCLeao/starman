@@ -35,19 +35,19 @@ Uma capacidade só está pronta quando:
 
 ## Estado atual
 
-Com o M4 fechado, a base contém tudo do M3 mais:
+Com o M5 fechado, a base contém tudo do M4 mais:
 
-- `FrameRenderer` único com `extract → prepare → queue → render graph` (ADR 0009);
-- `RenderWorld` desacoplado do gameplay world no encode;
-- GPU arena geracional, staging belt e deferred destroy;
-- shader library WGSL com `#include`, variantes e cache em disco;
-- capability tiers (Tier 0/1); Forward+ clustered lights (sem shadows);
-- frustum culling + batch keys 3D; picking/debug views; stress scene ~2k meshes / ~64 lights.
+- HDR linear (`RGBA16Float`) → exposure → ACES tonemap → sRGB (ADR 0010);
+- PBR metallic/roughness (Cook-Torrance) com materials estendidos + glTF extract;
+- lights SSBO no Forward+; quality presets Low–Ultra; TAA/SSAO/bloom gated;
+- CSM/local shadow budgets + IBL/probe blend scaffolding; LOD groups + mesh bounds;
+- editor: quality combo + graph/debug na status bar.
 
 Limitações conscientes que ainda valem:
 
-- PBR completo, shadows, IBL e post FX são M5;
+- shadow depth atlas encoding e env cubemap bake completo continuam a evoluir com conteúdo;
 - project manager completo é M7; builds distribuíveis são M8;
+- skinning/animação/partículas/UI de jogo são M6;
 
 
 - **cenas aninhadas / prefabs**: `SceneFile` v3 com `SceneInstanceData`, instâncias vivas no world (`engine-scene`), detecção de ciclos, overrides empilhados (apply/revert/promote), diff estrutural, e expansão no runner/editor;
@@ -168,7 +168,9 @@ Entregas:
 
 **Gate:** o renderer suporta cenas grandes de teste sem acoplamento ao editor e sem erros de validação nos três sistemas. Stress ~2k meshes / ~64 lights + Tier 1 no `engine-smoke` CI.
 
-### M5 — PBR e apresentação visual
+### M5 — PBR e apresentação visual ✅
+
+**Status:** fechado (ADR 0010, `docs/rendering.md`).
 
 **Objetivo:** atingir uma base visual moderna e previsível.
 
@@ -184,7 +186,7 @@ Entregas:
 - material inspector e preview no editor;
 - presets de qualidade e fallback visual determinístico.
 
-**Gate:** a fase de referência alcança uma direção de arte consistente nos três backends, com budgets documentados.
+**Gate:** a fase de referência alcança uma direção de arte consistente nos três backends, com budgets documentados. Smoke HDR + Tier 1 + quality report.
 
 ### M6 — Gameplay stack e ferramentas de conteúdo
 
@@ -302,7 +304,7 @@ Esses itens podem entrar depois, por evidência de produto, sem contaminar as fu
 
 ## Próximo ciclo recomendado
 
-Com M0–M4 fechados, o próximo ciclo inicia M5 (PBR e apresentação visual).
+Com M0–M5 fechados, o próximo ciclo inicia M6 (gameplay stack e ferramentas de conteúdo).
 
 ## Indicadores de progresso
 

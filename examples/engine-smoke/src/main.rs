@@ -329,6 +329,17 @@ async fn run_smoke(
             frame.last_pass_order().len()
         ),
     ));
+    report.checks.push(check(
+        "quality-preset",
+        true,
+        format!(
+            "preset={}, taa={}, exposure={:.2}, cascades={}",
+            frame.quality().preset.as_str(),
+            frame.quality().taa_enabled,
+            frame.quality().exposure,
+            frame.quality().cascade_count
+        ),
+    ));
 
     frame.request_pick(128, 128);
     frame
