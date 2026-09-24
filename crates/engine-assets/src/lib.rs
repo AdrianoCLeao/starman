@@ -23,7 +23,9 @@ pub mod scene;
 mod server_typed;
 pub mod typed;
 
-pub use builtin::{AssetsPlugin, MaterialLoader, MeshLoader, TextureLoader};
+pub use builtin::{
+    AssetsPlugin, HdrImageData, HdrImageLoader, MaterialLoader, MeshLoader, TextureLoader,
+};
 pub mod watch;
 
 pub use server_typed::AssetUpdateReport;
@@ -68,6 +70,12 @@ pub struct AssetId(u64);
 impl AssetId {
     pub fn value(self) -> u64 {
         self.0
+    }
+
+    /// Builds an id from a raw value. Ids are process-local and never
+    /// persisted; this exists for tests and tools that fabricate keys.
+    pub fn from_raw(value: u64) -> Self {
+        Self(value)
     }
 }
 

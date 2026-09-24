@@ -10,7 +10,7 @@ use super::{EntityData, SceneValue};
 /// referenced scene asset.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct OverrideEntry {
-    /// Template entity id inside the referenced [`SceneFile`].
+    /// Template entity id inside the referenced [`SceneFile`](crate::SceneFile).
     pub target: EntityId,
     pub component: String,
     /// Dot-separated reflect field path (empty string = whole component).

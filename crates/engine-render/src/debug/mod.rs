@@ -14,6 +14,8 @@ pub enum DebugView {
     Clusters,
     Overdraw,
     LightHeat,
+    Ssao,
+    Velocity,
 }
 
 impl DebugView {
@@ -25,7 +27,22 @@ impl DebugView {
             Self::Clusters => "clusters",
             Self::Overdraw => "overdraw",
             Self::LightHeat => "light_heat",
+            Self::Ssao => "ssao",
+            Self::Velocity => "velocity",
         }
+    }
+
+    pub fn all() -> [Self; 8] {
+        [
+            Self::None,
+            Self::Depth,
+            Self::Normals,
+            Self::Clusters,
+            Self::Overdraw,
+            Self::LightHeat,
+            Self::Ssao,
+            Self::Velocity,
+        ]
     }
 
     pub fn enables_debug_blit(self) -> bool {

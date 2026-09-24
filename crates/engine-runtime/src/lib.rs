@@ -52,6 +52,7 @@ pub fn default_plugins() -> Vec<Box<dyn RuntimePlugin>> {
         Box::new(engine_assets::AssetsPlugin),
         Box::new(engine_input::InputPlugin),
         Box::new(engine_physics::PhysicsPlugin),
+        Box::new(engine_render::RenderPlugin),
     ]
 }
 

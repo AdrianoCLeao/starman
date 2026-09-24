@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::World;
-use engine_core::{Camera2d, Camera3d, GlobalTransform, PrimaryCamera};
+use engine_core::{Camera2d, GlobalTransform, PrimaryCamera};
 use engine_math::{glam::Affine3A, Mat4, Vec3};
 
-use crate::camera_uniforms::{extract_camera_uniform_2d, extract_camera_uniform_3d};
+use crate::camera_uniforms::extract_camera_uniform_2d;
 
 fn assert_matrix_approx_eq(actual: [[f32; 4]; 4], expected: [[f32; 4]; 4], epsilon: f32) {
     for row in 0..4 {
@@ -16,30 +16,6 @@ fn assert_matrix_approx_eq(actual: [[f32; 4]; 4], expected: [[f32; 4]; 4], epsil
             );
         }
     }
-}
-
-#[test]
-fn extract_camera_uniform_3d_returns_none_without_primary_camera() {
-    let mut world = World::new();
-    world.spawn((Camera3d::default(), GlobalTransform::default()));
-
-    let uniform = extract_camera_uniform_3d(&mut world);
-
-    assert!(uniform.is_none());
-}
-
-#[test]
-fn extract_camera_uniform_3d_uses_primary_camera_transform() {
-    let mut world = World::new();
-    world.spawn((
-        Camera3d::default(),
-        GlobalTransform(Affine3A::from_translation(Vec3::new(3.0, 4.0, 5.0))),
-        PrimaryCamera,
-    ));
-
-    let uniform = extract_camera_uniform_3d(&mut world).expect("primary camera uniform");
-
-    assert_eq!(uniform.camera_position, [3.0, 4.0, 5.0, 1.0]);
 }
 
 #[test]

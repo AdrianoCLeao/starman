@@ -52,6 +52,28 @@ impl RenderGraph {
         self.passes.push(pass);
     }
 
+    /// Adds `pass` and makes every node in `before` depend on it.
+    pub fn add_pass_before(&mut self, pass: PassNode, before: &[PassId]) {
+        let id = pass.id;
+        self.passes.retain(|existing| existing.id != id);
+        self.passes.push(pass);
+        for target in before {
+            if let Some(node) = self.passes.iter_mut().find(|p| p.id == *target) {
+                if !node.after.contains(&id) {
+                    node.after.push(id);
+                }
+            }
+        }
+    }
+
+    pub fn contains(&self, id: PassId) -> bool {
+        self.passes.iter().any(|p| p.id == id)
+    }
+
+    pub fn is_enabled(&self, id: PassId) -> bool {
+        self.passes.iter().any(|p| p.id == id && p.enabled)
+    }
+
     pub fn set_enabled(&mut self, id: PassId, enabled: bool) {
         if let Some(pass) = self.passes.iter_mut().find(|p| p.id == id) {
             pass.enabled = enabled;
@@ -122,59 +144,195 @@ impl RenderGraph {
         Ok(scheduled)
     }
 
-    /// Default M5 Forward+ / HDR graph.
+    /// The built-in Forward+ / HDR graph (M6). Resource names document
+    /// data flow for inspection; ordering comes from `after`.
     pub fn default_forward_plus() -> Self {
         let mut graph = Self::new();
         for (id, kind) in [
             (ResourceId("hdr_color"), ResourceKind::ColorTarget),
-            (ResourceId("color"), ResourceKind::ColorTarget),
+            (ResourceId("output"), ResourceKind::ColorTarget),
             (ResourceId("depth"), ResourceKind::Depth),
+            (ResourceId("velocity"), ResourceKind::Texture),
+            (ResourceId("ssao"), ResourceKind::Texture),
             (ResourceId("id_buffer"), ResourceKind::Texture),
             (ResourceId("lights"), ResourceKind::Buffer),
             (ResourceId("clusters"), ResourceKind::Buffer),
+            (ResourceId("instances"), ResourceKind::Buffer),
             (ResourceId("shadow_csm"), ResourceKind::Texture),
             (ResourceId("shadow_local"), ResourceKind::Texture),
-            (ResourceId("velocity"), ResourceKind::Texture),
-            (ResourceId("history"), ResourceKind::Texture),
+            (ResourceId("environment"), ResourceKind::Texture),
+            (ResourceId("probes"), ResourceKind::Texture),
+            (ResourceId("taa_history"), ResourceKind::Texture),
+            (ResourceId("bloom_chain"), ResourceKind::Texture),
         ] {
             graph.add_resource(GraphResourceDecl { id, kind });
         }
 
-        let add =
-            |graph: &mut RenderGraph, id: &'static str, after: &[&'static str], enabled: bool| {
-                graph.add_pass(PassNode {
-                    id: PassId(id),
-                    reads: vec![],
-                    writes: vec![],
-                    after: after.iter().map(|p| PassId(p)).collect(),
-                    enabled,
-                });
-            };
+        let add = |graph: &mut RenderGraph,
+                   id: &'static str,
+                   after: &[&'static str],
+                   reads: &[&'static str],
+                   writes: &[&'static str],
+                   enabled: bool| {
+            graph.add_pass(PassNode {
+                id: PassId(id),
+                reads: reads.iter().map(|r| ResourceId(r)).collect(),
+                writes: writes.iter().map(|w| ResourceId(w)).collect(),
+                after: after.iter().map(|p| PassId(p)).collect(),
+                enabled,
+            });
+        };
 
-        add(&mut graph, "clear", &[], true);
-        add(&mut graph, "shadow_csm", &["clear"], true);
-        add(&mut graph, "shadow_local", &["clear"], true);
-        add(&mut graph, "id_pick", &["clear"], false);
-        add(&mut graph, "cluster_cull", &["clear"], true);
         add(
             &mut graph,
-            "opaque_forward_plus",
-            &["cluster_cull", "shadow_csm", "shadow_local"],
+            "shadow_csm",
+            &[],
+            &["instances"],
+            &["shadow_csm"],
             true,
         );
-        add(&mut graph, "skybox", &["opaque_forward_plus"], true);
-        add(&mut graph, "transparent_2d", &["skybox"], true);
-        add(&mut graph, "ssao", &["transparent_2d"], false);
-        add(&mut graph, "bloom", &["ssao", "transparent_2d"], false);
-        add(&mut graph, "taa", &["bloom", "transparent_2d"], false);
         add(
             &mut graph,
-            "tonemap_aces",
-            &["taa", "bloom", "transparent_2d", "ssao"],
+            "shadow_local",
+            &[],
+            &["instances"],
+            &["shadow_local"],
             true,
         );
-        add(&mut graph, "overlay", &["tonemap_aces"], true);
-        add(&mut graph, "debug_blit", &["overlay"], false);
+        add(
+            &mut graph,
+            "probe_bake",
+            &["shadow_csm", "shadow_local"],
+            &[
+                "instances",
+                "lights",
+                "shadow_csm",
+                "shadow_local",
+                "environment",
+            ],
+            &["probes"],
+            true,
+        );
+        add(
+            &mut graph,
+            "prepass",
+            &[],
+            &["instances"],
+            &["depth", "velocity"],
+            true,
+        );
+        add(
+            &mut graph,
+            "ssao",
+            &["prepass"],
+            &["depth"],
+            &["ssao"],
+            false,
+        );
+        add(
+            &mut graph,
+            "opaque",
+            &[
+                "prepass",
+                "ssao",
+                "shadow_csm",
+                "shadow_local",
+                "probe_bake",
+            ],
+            &[
+                "instances",
+                "lights",
+                "clusters",
+                "shadow_csm",
+                "shadow_local",
+                "environment",
+                "probes",
+                "ssao",
+                "depth",
+            ],
+            &["hdr_color"],
+            true,
+        );
+        add(
+            &mut graph,
+            "skybox",
+            &["opaque"],
+            &["environment", "depth"],
+            &["hdr_color"],
+            true,
+        );
+        add(
+            &mut graph,
+            "transparent_3d",
+            &["skybox"],
+            &["instances", "lights", "clusters", "depth"],
+            &["hdr_color"],
+            true,
+        );
+        add(
+            &mut graph,
+            "sprites_2d",
+            &["transparent_3d"],
+            &[],
+            &["hdr_color"],
+            true,
+        );
+        add(
+            &mut graph,
+            "taa",
+            &["sprites_2d"],
+            &["hdr_color", "velocity", "taa_history"],
+            &["hdr_color", "taa_history"],
+            false,
+        );
+        add(
+            &mut graph,
+            "bloom",
+            &["taa", "sprites_2d"],
+            &["hdr_color"],
+            &["bloom_chain"],
+            false,
+        );
+        add(
+            &mut graph,
+            "tonemap",
+            &["taa", "bloom", "sprites_2d"],
+            &["hdr_color", "bloom_chain"],
+            &["output"],
+            true,
+        );
+        add(
+            &mut graph,
+            "overdraw",
+            &["tonemap"],
+            &["instances"],
+            &["output"],
+            false,
+        );
+        add(
+            &mut graph,
+            "debug_view",
+            &["tonemap", "overdraw"],
+            &["depth", "clusters"],
+            &["output"],
+            false,
+        );
+        add(
+            &mut graph,
+            "debug_lines",
+            &["tonemap", "debug_view"],
+            &["depth"],
+            &["output"],
+            true,
+        );
+        add(
+            &mut graph,
+            "picking",
+            &["prepass"],
+            &["instances"],
+            &["id_buffer"],
+            false,
+        );
         graph
     }
 }
@@ -187,12 +345,32 @@ mod tests {
     fn schedules_default_graph() {
         let graph = RenderGraph::default_forward_plus();
         let order = graph.schedule().unwrap();
-        let clear = order.iter().position(|p| *p == PassId("clear")).unwrap();
-        let tonemap = order
-            .iter()
-            .position(|p| *p == PassId("tonemap_aces"))
-            .unwrap();
-        assert!(clear < tonemap);
+        let position = |name| order.iter().position(|p| *p == PassId(name)).unwrap();
+        assert!(position("prepass") < position("opaque"));
+        assert!(position("shadow_csm") < position("opaque"));
+        assert!(position("opaque") < position("skybox"));
+        assert!(position("skybox") < position("transparent_3d"));
+        assert!(position("transparent_3d") < position("tonemap"));
+        assert!(position("tonemap") < position("debug_lines"));
+    }
+
+    #[test]
+    fn extension_nodes_slot_between_builtins() {
+        let mut graph = RenderGraph::default_forward_plus();
+        graph.add_pass_before(
+            PassNode {
+                id: PassId("particles"),
+                reads: vec![],
+                writes: vec![],
+                after: vec![PassId("transparent_3d")],
+                enabled: true,
+            },
+            &[PassId("sprites_2d")],
+        );
+        let order = graph.schedule().unwrap();
+        let position = |name| order.iter().position(|p| *p == PassId(name)).unwrap();
+        assert!(position("transparent_3d") < position("particles"));
+        assert!(position("particles") < position("sprites_2d"));
     }
 
     #[test]

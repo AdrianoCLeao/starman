@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::{Component, World};
 use bytemuck::{Pod, Zeroable};
 use engine_assets::{AssetServer, MaterialHandle, MeshHandle, TextureHandle};
-use engine_core::{EngineError, Result};
-use std::{mem::size_of, sync::Arc};
+use engine_core::{EngineError, GameRuntime, Result, RuntimePlugin};
+use std::sync::Arc;
 use winit::window::Window;
 
 use surface::{acquire_frame, choose_present_mode};
@@ -11,32 +11,27 @@ mod camera_uniforms;
 #[cfg(test)]
 mod camera_uniforms_tests;
 mod capabilities;
+pub mod components;
 mod culling;
 mod debug;
 mod draw;
 #[cfg(test)]
 mod draw_tests;
+pub mod extension;
 mod extract;
 mod forward_plus;
 mod frame;
-mod gpu;
-mod gpu_resources;
-#[cfg(test)]
-mod gpu_resources_tests;
+pub mod gpu;
 mod graph;
-mod ibl;
-mod lights;
+pub mod layouts;
 mod lod;
-mod pbr;
+pub mod passes;
 mod picking;
-mod pipelines;
-mod post;
-mod probes;
 mod quality;
 mod scene_adapter;
 #[cfg(test)]
 mod scene_adapter_tests;
-mod shader;
+pub mod shader;
 mod shadows;
 mod stress;
 mod surface;
@@ -46,27 +41,56 @@ mod taa;
 mod texture_upload;
 #[cfg(test)]
 mod texture_upload_tests;
+pub mod uniforms;
 
 pub use capabilities::{negotiate_tier, CapabilityTier, NegotiatedCapabilities};
+pub use components::{
+    register_render_reflection_types, CameraRenderSettings, DirectionalLight, Environment,
+    NotShadowCaster, NotShadowReceiver, PointLight, ReflectionProbe, SkyMode, SpotLight,
+};
 pub use culling::{build_batches_3d, frustum_cull_meshes, Frustum};
 pub use debug::DebugView;
+pub use extension::{
+    EncodeContext, ExtensionNode, ExtractInfo, NodeTarget, PrepareContext, RenderExtension,
+    RenderExtensions,
+};
 pub use extract::{extract_render_world, Aabb, ExtractedMesh, RenderWorld};
 pub use forward_plus::{
-    build_gpu_lights, cull_lights_cpu, pack_cluster_buffers, ClusterGrid, GpuLight,
+    assign_clusters, build_gpu_lights, cull_lights_cpu, pack_cluster_buffers, ClusterGrid,
+    ClusterLayout, GpuLight,
 };
 pub use frame::{
-    create_frame_renderer_from_adapter, create_frame_renderer_from_device, FrameRenderer,
-    FrameRendererConfig,
+    create_frame_renderer_from_adapter, create_frame_renderer_from_device, read_texture_rgba8,
+    FrameRenderer, FrameRendererConfig, RenderStats,
 };
 pub use graph::{PassId, RenderGraph};
-pub use lights::{DirectionalLight, PointLight, SpotLight};
 pub use lod::LodGroup;
 pub use picking::PickResult;
-pub use probes::ReflectionProbe;
 pub use quality::{QualityPreset, QualitySettings};
 pub use scene_adapter::RenderSceneAdapter;
-pub use shadows::{cascade_split_depths, select_local_shadow_casters};
+pub use shadows::{cascade_split_depths, fit_cascades, select_local_shadow_casters};
 pub use stress::{spawn_stress_scene, StressSceneConfig};
+
+/// Registers renderer components and the render-extension registry in a
+/// runtime (reflection for lights, environment, camera settings, probes).
+#[derive(Default)]
+pub struct RenderPlugin;
+
+impl RuntimePlugin for RenderPlugin {
+    fn name(&self) -> &'static str {
+        "engine::render"
+    }
+
+    fn build(&self, runtime: &mut GameRuntime) {
+        runtime.init_resource::<RenderExtensions>();
+        engine_reflect::with_reflection_registries(
+            &mut runtime.world,
+            |types, components, metadata| {
+                register_render_reflection_types(types, components, metadata)
+            },
+        );
+    }
+}
 
 #[derive(Component, Clone, Copy, Debug)]
 pub struct MeshRenderable3d {
@@ -247,145 +271,10 @@ struct RenderState {
     clear_color: wgpu::Color,
 }
 
-pub(crate) struct DepthTarget {
-    pub(crate) _texture: wgpu::Texture,
-    pub(crate) view: wgpu::TextureView,
-}
-
-pub(crate) struct Pipeline3d {
-    pub(crate) pipeline: wgpu::RenderPipeline,
-    pub(crate) camera_buffer: wgpu::Buffer,
-    pub(crate) camera_bind_group: wgpu::BindGroup,
-    pub(crate) model_layout: wgpu::BindGroupLayout,
-    pub(crate) material_layout: wgpu::BindGroupLayout,
-    #[allow(dead_code)]
-    pub(crate) light_layout: wgpu::BindGroupLayout,
-    pub(crate) lights_buffer: wgpu::Buffer,
-    pub(crate) light_count_buffer: wgpu::Buffer,
-    pub(crate) light_bind_group: wgpu::BindGroup,
-}
-
-pub(crate) struct Pipeline2d {
-    pub(crate) pipeline: wgpu::RenderPipeline,
-    pub(crate) camera_buffer: wgpu::Buffer,
-    pub(crate) camera_bind_group: wgpu::BindGroup,
-    pub(crate) sprite_layout: wgpu::BindGroupLayout,
-    pub(crate) quad_vertex_buffer: wgpu::Buffer,
-    pub(crate) quad_index_buffer: wgpu::Buffer,
-    pub(crate) quad_index_count: u32,
-}
-
-pub(crate) struct GpuMesh {
-    pub(crate) vertex_buffer: wgpu::Buffer,
-    pub(crate) index_buffer: wgpu::Buffer,
-    pub(crate) index_count: u32,
-}
-
-pub(crate) struct GpuTexture {
-    pub(crate) texture: wgpu::Texture,
-    pub(crate) view: wgpu::TextureView,
-    pub(crate) sampler: wgpu::Sampler,
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-    pub(crate) revision: u64,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct Camera3dUniform {
-    pub(crate) view_proj: [[f32; 4]; 4],
-    pub(crate) camera_position: [f32; 4],
-    pub(crate) light_direction: [f32; 4],
-}
-
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct Camera2dUniform {
     pub(crate) view_proj: [[f32; 4]; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct ModelUniform {
-    pub(crate) model: [[f32; 4]; 4],
-    pub(crate) normal: [[f32; 4]; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct MaterialUniform {
-    pub(crate) base_color: [f32; 4],
-    pub(crate) metallic_roughness: [f32; 4],
-    pub(crate) emissive: [f32; 4],
-    pub(crate) flags: [u32; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct GpuVertex {
-    pub(crate) position: [f32; 3],
-    pub(crate) normal: [f32; 3],
-    pub(crate) uv: [f32; 2],
-}
-
-impl GpuVertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 3] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2];
-
-    fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: size_of::<GpuVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBUTES,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct SpriteQuadVertex {
-    position: [f32; 2],
-    uv: [f32; 2],
-}
-
-impl SpriteQuadVertex {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2];
-
-    fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: size_of::<SpriteQuadVertex>() as u64,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBUTES,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub(crate) struct SpriteInstance {
-    pub(crate) model: [[f32; 4]; 4],
-    pub(crate) color: [f32; 4],
-    pub(crate) uv_rect: [f32; 4],
-}
-
-impl SpriteInstance {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
-        2 => Float32x4,
-        3 => Float32x4,
-        4 => Float32x4,
-        5 => Float32x4,
-        6 => Float32x4,
-        7 => Float32x4
-    ];
-
-    fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: size_of::<SpriteInstance>() as u64,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &Self::ATTRIBUTES,
-        }
-    }
 }
 
 impl RenderState {

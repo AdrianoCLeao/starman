@@ -7,12 +7,15 @@ license.workspace = true
 
 [dependencies]
 bevy_ecs.workspace = true
+bevy_reflect.workspace = true
 blake3.workspace = true
 bytemuck.workspace = true
 engine-assets = { path = "../engine-assets" }
 engine-core = { path = "../engine-core" }
 engine-math = { path = "../engine-math" }
+engine-reflect = { path = "../engine-reflect" }
 log.workspace = true
+naga = { version = "24", features = ["wgsl-in"] }
 pollster = "0.3"
 ron.workspace = true
 serde.workspace = true
@@ -20,4 +23,4 @@ wgpu.workspace = true
 winit.workspace = true
 
 [dev-dependencies]
-engine-reflect = { path = "../engine-reflect" }
+image.workspace = true

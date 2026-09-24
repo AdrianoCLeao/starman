@@ -1,23 +1,8 @@
 use bevy_ecs::{prelude::World, query::With};
-use engine_core::{Camera2d, Camera3d, GlobalTransform, PrimaryCamera};
+use engine_core::{Camera2d, GlobalTransform, PrimaryCamera};
 use engine_math::Mat4;
 
-use crate::{Camera2dUniform, Camera3dUniform};
-
-pub(crate) fn extract_camera_uniform_3d(world: &mut World) -> Option<Camera3dUniform> {
-    let mut query = world.query_filtered::<(&Camera3d, &GlobalTransform), With<PrimaryCamera>>();
-    let (camera, global_transform) = query.iter(world).next()?;
-
-    let view = Mat4::from(global_transform.0.inverse());
-    let view_proj = camera.projection_matrix() * view;
-    let translation = global_transform.translation();
-
-    Some(Camera3dUniform {
-        view_proj: view_proj.to_cols_array_2d(),
-        camera_position: [translation.x, translation.y, translation.z, 1.0],
-        light_direction: [0.6, -1.0, 0.2, 0.0],
-    })
-}
+use crate::Camera2dUniform;
 
 pub(crate) fn extract_camera_uniform_2d(
     world: &mut World,

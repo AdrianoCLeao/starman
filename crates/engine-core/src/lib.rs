@@ -4,6 +4,7 @@ pub mod hardening;
 pub mod hierarchy;
 pub mod id;
 pub mod reflect;
+pub mod render_data;
 pub mod runtime;
 pub mod schedule;
 pub mod tag;
@@ -17,6 +18,7 @@ pub use hardening::HardeningConfig;
 pub use hierarchy::{despawn_recursive, set_parent, HierarchyCommandsExt};
 pub use id::{EntityId, PersistentId, ProjectId, SourceAssetId, SubAssetId};
 pub use reflect::register_core_reflection_types;
+pub use render_data::{DebugCategory, DebugColor, DebugDraw, DebugLine, SkinPalette};
 pub use runtime::{
     FrameHooks, GameClock, GameRuntime, NoHooks, RuntimeFrame, RuntimePlugin,
     MAX_FIXED_STEPS_PER_FRAME,

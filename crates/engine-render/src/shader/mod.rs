@@ -1,9 +1,22 @@
-#![allow(dead_code)]
+//! WGSL shader library (ADR 0009): `#include`, preprocessor variants,
+//! compiled-module cache, disk cache of expanded variants, and compile
+//! errors mapped back to the original file and line.
+//!
+//! Supported directives (one per line, `#` must be the first non-blank):
+//!
+//! * `#include "relative/path.wgsl"` — textual include, each file at most
+//!   once per expansion (include guards are implicit), cycles rejected;
+//! * `#define NAME` — defines a flag for the rest of the expansion;
+//! * `#ifdef NAME`, `#ifndef NAME`, `#if defined(A) && !defined(B)`
+//!   (`&&`/`||`/`!` over `defined(...)`, no parentheses nesting),
+//!   `#else`, `#endif` — nestable conditionals.
+//!
+//! Variants are selected by a set of defines; each distinct set compiles
+//! to its own module, cached by `(path, defines)`.
 
-//! WGSL shader library with `#include`, variants, and disk cache.
-
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use blake3::Hasher;
 use engine_core::{EngineError, Result};
@@ -13,6 +26,7 @@ use crate::capabilities::CapabilityTier;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ShaderId(pub &'static str);
 
+/// Legacy variant key (id + feature bits + tier); kept for API stability.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ShaderVariantKey {
     pub id: ShaderId,
@@ -20,12 +34,39 @@ pub struct ShaderVariantKey {
     pub tier: CapabilityTier,
 }
 
+/// Where a line of expanded source came from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SourceLocation {
+    pub file: String,
+    pub line: usize,
+}
+
+/// Fully preprocessed source plus a line map back to the originals.
+#[derive(Clone, Debug)]
+pub struct ExpandedShader {
+    pub source: String,
+    /// `line_map[i]` is the origin of expanded line `i` (0-based).
+    pub line_map: Vec<SourceLocation>,
+}
+
+impl ExpandedShader {
+    /// Maps a 1-based expanded line number to its origin.
+    pub fn origin_of(&self, expanded_line: usize) -> Option<&SourceLocation> {
+        expanded_line
+            .checked_sub(1)
+            .and_then(|index| self.line_map.get(index))
+    }
+}
+
+type VariantKey = (String, Vec<String>);
+
 pub struct ShaderLibrary {
     root: PathBuf,
     cache_dir: PathBuf,
-    /// Expanded source cache.
-    expanded: HashMap<String, String>,
-    modules: HashMap<ShaderVariantKey, wgpu::ShaderModule>,
+    /// Expanded (include-resolved, preprocessed) sources per variant.
+    expanded: HashMap<VariantKey, ExpandedShader>,
+    modules: HashMap<VariantKey, Arc<wgpu::ShaderModule>>,
+    legacy_modules: HashMap<ShaderVariantKey, Arc<wgpu::ShaderModule>>,
 }
 
 impl ShaderLibrary {
@@ -35,43 +76,103 @@ impl ShaderLibrary {
             cache_dir: cache_dir.into(),
             expanded: HashMap::new(),
             modules: HashMap::new(),
+            legacy_modules: HashMap::new(),
         }
+    }
+
+    /// The library rooted at the engine's built-in shader directory.
+    pub fn builtin() -> Self {
+        Self::new(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("shaders"),
+            PathBuf::from(".starman/shader-cache"),
+        )
     }
 
     pub fn root(&self) -> &Path {
         &self.root
     }
 
-    /// Expand `#include "path"` recursively with cycle detection.
+    /// Expands `#include`s only (no defines), for tools.
     pub fn expand_source(&mut self, relative: &str) -> Result<String> {
-        if let Some(cached) = self.expanded.get(relative) {
-            return Ok(cached.clone());
-        }
-        let mut visiting = HashSet::new();
-        let expanded = expand_includes(&self.root, relative, &mut visiting)?;
-        self.expanded.insert(relative.to_owned(), expanded.clone());
-        Ok(expanded)
+        Ok(self.expand_variant(relative, &[])?.source)
     }
 
+    /// Expands `relative` with `defines` active.
+    pub fn expand_variant(&mut self, relative: &str, defines: &[&str]) -> Result<ExpandedShader> {
+        let key = variant_key(relative, defines);
+        if let Some(cached) = self.expanded.get(&key) {
+            return Ok(cached.clone());
+        }
+        let mut state = Preprocessor {
+            root: &self.root,
+            defines: defines.iter().map(|d| (*d).to_owned()).collect(),
+            included: HashSet::new(),
+            stack: Vec::new(),
+            output: ExpandedShader {
+                source: String::new(),
+                line_map: Vec::new(),
+            },
+        };
+        state.process_file(relative)?;
+        self.expanded.insert(key, state.output.clone());
+        Ok(state.output)
+    }
+
+    /// Compiles (or returns the cached) module for `relative` + `defines`.
+    /// Validation errors are reported with the original file and line.
+    pub fn module(
+        &mut self,
+        device: &wgpu::Device,
+        relative: &str,
+        defines: &[&str],
+    ) -> Result<Arc<wgpu::ShaderModule>> {
+        let key = variant_key(relative, defines);
+        if let Some(module) = self.modules.get(&key) {
+            return Ok(Arc::clone(module));
+        }
+        let expanded = self.expand_variant(relative, defines)?;
+        validate_wgsl(relative, defines, &expanded)?;
+        let hash = hash_source(&expanded.source, &key.1);
+        let _ = self.write_cache(&hash, &expanded.source);
+
+        let label = if defines.is_empty() {
+            relative.to_owned()
+        } else {
+            format!("{relative}[{}]", key.1.join(","))
+        };
+        let module = Arc::new(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some(&label),
+            source: wgpu::ShaderSource::Wgsl(expanded.source.into()),
+        }));
+        self.modules.insert(key, Arc::clone(&module));
+        Ok(module)
+    }
+
+    /// Legacy entry point (M4 API): compiles `relative` with no defines.
     pub fn compile(
         &mut self,
         device: &wgpu::Device,
         key: ShaderVariantKey,
         relative: &str,
-    ) -> Result<&wgpu::ShaderModule> {
-        if self.modules.contains_key(&key) {
-            return Ok(self.modules.get(&key).expect("just inserted"));
+    ) -> Result<Arc<wgpu::ShaderModule>> {
+        if let Some(module) = self.legacy_modules.get(&key) {
+            return Ok(Arc::clone(module));
         }
-        let source = self.expand_source(relative)?;
-        let hash = hash_source(&source, key.feature_bits, key.tier);
-        let _ = self.write_cache(&hash, &source);
+        let module = self.module(device, relative, &[])?;
+        self.legacy_modules.insert(key, Arc::clone(&module));
+        Ok(module)
+    }
 
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(key.id.0),
-            source: wgpu::ShaderSource::Wgsl(source.into()),
-        });
-        self.modules.insert(key, module);
-        Ok(self.modules.get(&key).expect("just inserted"))
+    /// Number of distinct compiled variants (diagnostics).
+    pub fn compiled_variant_count(&self) -> usize {
+        self.modules.len()
+    }
+
+    /// Drops every cached expansion/module (shader hot reload).
+    pub fn invalidate(&mut self) {
+        self.expanded.clear();
+        self.modules.clear();
+        self.legacy_modules.clear();
     }
 
     fn write_cache(&self, hash: &str, source: &str) -> Result<()> {
@@ -85,90 +186,248 @@ impl ShaderLibrary {
     }
 }
 
-fn hash_source(source: &str, features: u64, tier: CapabilityTier) -> String {
+fn variant_key(relative: &str, defines: &[&str]) -> VariantKey {
+    let set: BTreeSet<String> = defines.iter().map(|d| (*d).to_owned()).collect();
+    (relative.to_owned(), set.into_iter().collect())
+}
+
+fn hash_source(source: &str, defines: &[String]) -> String {
     let mut hasher = Hasher::new();
     hasher.update(source.as_bytes());
-    hasher.update(&features.to_le_bytes());
-    hasher.update(tier.as_str().as_bytes());
+    for define in defines {
+        hasher.update(define.as_bytes());
+        hasher.update(b"\0");
+    }
     hasher.finalize().to_hex().to_string()
 }
 
-fn expand_includes(root: &Path, relative: &str, visiting: &mut HashSet<String>) -> Result<String> {
-    if !visiting.insert(relative.to_owned()) {
-        return Err(EngineError::Render(format!(
-            "shader include cycle involving '{relative}'"
-        )));
-    }
-    let path = root.join(relative);
-    let text = std::fs::read_to_string(&path).map_err(|error| {
+/// Parses with naga so errors point at the authored file/line instead of
+/// an opaque device error at pipeline creation.
+fn validate_wgsl(relative: &str, defines: &[&str], expanded: &ExpandedShader) -> Result<()> {
+    let module = naga::front::wgsl::parse_str(&expanded.source).map_err(|error| {
+        let location = error
+            .location(&expanded.source)
+            .and_then(|loc| expanded.origin_of(loc.line_number as usize));
+        let at = location
+            .map(|loc| format!("{}:{}", loc.file, loc.line))
+            .unwrap_or_else(|| relative.to_owned());
         EngineError::Render(format!(
-            "failed to read shader '{}': {error}",
-            path.display()
+            "shader '{relative}' {defines:?}: {at}: {}",
+            error.message()
         ))
     })?;
+    let mut validator = naga::valid::Validator::new(
+        naga::valid::ValidationFlags::all(),
+        naga::valid::Capabilities::all(),
+    );
+    validator.validate(&module).map_err(|error| {
+        let span = error
+            .spans()
+            .next()
+            .map(|(span, _)| span.location(&expanded.source).line_number as usize);
+        let at = span
+            .and_then(|line| expanded.origin_of(line))
+            .map(|loc| format!("{}:{}", loc.file, loc.line))
+            .unwrap_or_else(|| relative.to_owned());
+        EngineError::Render(format!(
+            "shader '{relative}' {defines:?}: {at}: validation failed: {}",
+            error.as_inner()
+        ))
+    })?;
+    Ok(())
+}
 
-    let mut output = String::new();
-    for (line_no, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("#include") {
-            let rest = rest.trim();
-            let include_path = rest
-                .trim_matches(|c| c == '"' || c == '\'' || c == '<' || c == '>')
-                .trim();
-            if include_path.is_empty() {
-                return Err(EngineError::Render(format!(
-                    "{}:{}: empty #include",
-                    relative,
-                    line_no + 1
-                )));
-            }
-            let nested = expand_includes(root, include_path, visiting).map_err(|error| {
-                EngineError::Render(format!(
-                    "{}:{}: while including '{include_path}': {error}",
-                    relative,
-                    line_no + 1
-                ))
-            })?;
-            output.push_str(&nested);
-            if !nested.ends_with('\n') {
-                output.push('\n');
-            }
-        } else {
-            output.push_str(line);
-            output.push('\n');
+struct Preprocessor<'a> {
+    root: &'a Path,
+    defines: HashSet<String>,
+    included: HashSet<String>,
+    stack: Vec<String>,
+    output: ExpandedShader,
+}
+
+/// One level of `#if` nesting.
+struct Conditional {
+    /// Whether the enclosing scope is emitting.
+    parent_active: bool,
+    /// Whether this branch is emitting.
+    active: bool,
+    /// Whether some branch of this conditional has already been taken.
+    taken: bool,
+    else_seen: bool,
+}
+
+impl Preprocessor<'_> {
+    fn process_file(&mut self, relative: &str) -> Result<()> {
+        if self.stack.iter().any(|entry| entry == relative) {
+            return Err(EngineError::Render(format!(
+                "shader include cycle: {} -> {relative}",
+                self.stack.join(" -> ")
+            )));
         }
+        if !self.included.insert(relative.to_owned()) {
+            // Implicit include guard.
+            return Ok(());
+        }
+        let path = self.root.join(relative);
+        let text = std::fs::read_to_string(&path).map_err(|error| {
+            EngineError::Render(format!(
+                "failed to read shader '{}': {error}",
+                path.display()
+            ))
+        })?;
+        self.stack.push(relative.to_owned());
+
+        let mut conditionals: Vec<Conditional> = Vec::new();
+        let is_active =
+            |conditionals: &Vec<Conditional>| conditionals.last().map(|c| c.active).unwrap_or(true);
+
+        for (line_index, line) in text.lines().enumerate() {
+            let line_no = line_index + 1;
+            let trimmed = line.trim_start();
+            let error =
+                |message: String| EngineError::Render(format!("{relative}:{line_no}: {message}"));
+            if let Some(directive) = trimmed.strip_prefix('#') {
+                let (name, rest) = directive
+                    .split_once(char::is_whitespace)
+                    .map(|(name, rest)| (name, rest.trim()))
+                    .unwrap_or((directive.trim(), ""));
+                match name {
+                    "include" => {
+                        if is_active(&conditionals) {
+                            let include = rest
+                                .trim_matches(|c| c == '"' || c == '\'' || c == '<' || c == '>')
+                                .trim();
+                            if include.is_empty() {
+                                return Err(error("empty #include".to_owned()));
+                            }
+                            self.process_file(include).map_err(|nested| {
+                                error(format!("while including '{include}': {nested}"))
+                            })?;
+                        }
+                    }
+                    "define" => {
+                        if is_active(&conditionals) {
+                            let symbol = rest.split_whitespace().next().unwrap_or("");
+                            if symbol.is_empty() {
+                                return Err(error("#define needs a name".to_owned()));
+                            }
+                            self.defines.insert(symbol.to_owned());
+                        }
+                    }
+                    "ifdef" | "ifndef" | "if" => {
+                        let parent_active = is_active(&conditionals);
+                        let value = match name {
+                            "ifdef" => self.defines.contains(rest),
+                            "ifndef" => !self.defines.contains(rest),
+                            _ => evaluate_condition(rest, &self.defines)
+                                .map_err(&error)?,
+                        };
+                        conditionals.push(Conditional {
+                            parent_active,
+                            active: parent_active && value,
+                            taken: value,
+                            else_seen: false,
+                        });
+                    }
+                    "elif" => {
+                        let defines = &self.defines;
+                        let top = conditionals
+                            .last_mut()
+                            .ok_or_else(|| error("#elif without #if".to_owned()))?;
+                        if top.else_seen {
+                            return Err(error("#elif after #else".to_owned()));
+                        }
+                        let value = evaluate_condition(rest, defines).map_err(&error)?;
+                        top.active = top.parent_active && !top.taken && value;
+                        top.taken |= value;
+                    }
+                    "else" => {
+                        let top = conditionals
+                            .last_mut()
+                            .ok_or_else(|| error("#else without #if".to_owned()))?;
+                        if top.else_seen {
+                            return Err(error("duplicate #else".to_owned()));
+                        }
+                        top.else_seen = true;
+                        top.active = top.parent_active && !top.taken;
+                        top.taken = true;
+                    }
+                    "endif" => {
+                        conditionals
+                            .pop()
+                            .ok_or_else(|| error("#endif without #if".to_owned()))?;
+                    }
+                    _ => {
+                        // Not a directive we own (WGSL has no `#`), keep it
+                        // so the parser reports it with a mapped location.
+                        if is_active(&conditionals) {
+                            self.emit(line, relative, line_no);
+                        }
+                    }
+                }
+                continue;
+            }
+            if is_active(&conditionals) {
+                self.emit(line, relative, line_no);
+            }
+        }
+        if !conditionals.is_empty() {
+            return Err(EngineError::Render(format!(
+                "{relative}: {} unterminated #if block(s)",
+                conditionals.len()
+            )));
+        }
+        self.stack.pop();
+        Ok(())
     }
-    visiting.remove(relative);
-    Ok(output)
+
+    fn emit(&mut self, line: &str, file: &str, line_no: usize) {
+        self.output.source.push_str(line);
+        self.output.source.push('\n');
+        self.output.line_map.push(SourceLocation {
+            file: file.to_owned(),
+            line: line_no,
+        });
+    }
+}
+
+/// Evaluates `defined(A) && !defined(B) || defined(C)` (`&&` binds
+/// tighter than `||`; no parentheses beyond `defined(...)`).
+fn evaluate_condition(
+    expression: &str,
+    defines: &HashSet<String>,
+) -> std::result::Result<bool, String> {
+    if expression.trim().is_empty() {
+        return Err("#if needs a condition".to_owned());
+    }
+    let mut any = false;
+    for disjunct in expression.split("||") {
+        let mut all = true;
+        for term in disjunct.split("&&") {
+            let term = term.trim();
+            let (negated, term) = match term.strip_prefix('!') {
+                Some(rest) => (true, rest.trim()),
+                None => (false, term),
+            };
+            let value = if let Some(inner) = term
+                .strip_prefix("defined(")
+                .and_then(|rest| rest.strip_suffix(')'))
+            {
+                defines.contains(inner.trim())
+            } else if term == "1" || term == "true" {
+                true
+            } else if term == "0" || term == "false" {
+                false
+            } else {
+                return Err(format!("unsupported #if term '{term}'"));
+            };
+            all &= value != negated;
+        }
+        any |= all;
+    }
+    Ok(any)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn expands_includes_and_detects_cycles() {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("starman-shader-{nanos}"));
-        std::fs::create_dir_all(root.join("common")).unwrap();
-        std::fs::write(root.join("common/math.wgsl"), "const PI: f32 = 3.14;\n").unwrap();
-        std::fs::write(
-            root.join("mesh.wgsl"),
-            "#include \"common/math.wgsl\"\nfn f() {}\n",
-        )
-        .unwrap();
-        let mut lib = ShaderLibrary::new(&root, root.join("cache"));
-        let expanded = lib.expand_source("mesh.wgsl").unwrap();
-        assert!(expanded.contains("PI"));
-        assert!(expanded.contains("fn f()"));
-
-        std::fs::write(root.join("a.wgsl"), "#include \"b.wgsl\"\n").unwrap();
-        std::fs::write(root.join("b.wgsl"), "#include \"a.wgsl\"\n").unwrap();
-        assert!(lib.expand_source("a.wgsl").is_err());
-        let _ = std::fs::remove_dir_all(&root);
-    }
-}
+#[path = "shader_tests.rs"]
+mod tests;

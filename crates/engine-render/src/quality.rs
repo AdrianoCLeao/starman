@@ -45,6 +45,13 @@ pub struct QualitySettings {
     pub probe_resolution: u32,
     pub lod_bias: f32,
     pub exposure: f32,
+    /// Distance covered by cascaded shadows (meters).
+    pub shadow_distance: f32,
+    pub ssao_samples: u32,
+    /// GPU particle budget (per frame, all systems).
+    pub max_gpu_particles: u32,
+    /// CPU particle budget (Tier 0 and CPU-simulated effects).
+    pub max_cpu_particles: u32,
 }
 
 impl QualitySettings {
@@ -55,7 +62,7 @@ impl QualitySettings {
                 shadow_map_resolution: 512,
                 cascade_count: 2,
                 local_shadow_slots: 0,
-                msaa_samples: 1,
+                msaa_samples: 4,
                 taa_enabled: false,
                 ssao_enabled: false,
                 bloom_enabled: false,
@@ -65,6 +72,10 @@ impl QualitySettings {
                 probe_resolution: 64,
                 lod_bias: 1.0,
                 exposure: 1.0,
+                shadow_distance: 40.0,
+                ssao_samples: 8,
+                max_gpu_particles: 20_000,
+                max_cpu_particles: 4_000,
             },
             QualityPreset::Medium => Self {
                 preset,
@@ -81,6 +92,10 @@ impl QualitySettings {
                 probe_resolution: 128,
                 lod_bias: 0.0,
                 exposure: 1.0,
+                shadow_distance: 60.0,
+                ssao_samples: 12,
+                max_gpu_particles: 100_000,
+                max_cpu_particles: 10_000,
             },
             QualityPreset::High => Self {
                 preset,
@@ -97,6 +112,10 @@ impl QualitySettings {
                 probe_resolution: 256,
                 lod_bias: -0.5,
                 exposure: 1.0,
+                shadow_distance: 90.0,
+                ssao_samples: 16,
+                max_gpu_particles: 250_000,
+                max_cpu_particles: 20_000,
             },
             QualityPreset::Ultra => Self {
                 preset,
@@ -113,6 +132,10 @@ impl QualitySettings {
                 probe_resolution: 256,
                 lod_bias: -1.0,
                 exposure: 1.0,
+                shadow_distance: 150.0,
+                ssao_samples: 24,
+                max_gpu_particles: 500_000,
+                max_cpu_particles: 40_000,
             },
         }
     }
@@ -140,6 +163,10 @@ impl QualitySettings {
             self.max_lights = self.max_lights.min(low.max_lights);
             self.max_probes = self.max_probes.min(1);
             self.probe_resolution = self.probe_resolution.min(64);
+            self.shadow_distance = self.shadow_distance.min(low.shadow_distance);
+            // No compute on Tier 0: particles simulate on the CPU only.
+            self.max_gpu_particles = 0;
+            self.max_cpu_particles = self.max_cpu_particles.min(low.max_cpu_particles);
         }
         self
     }

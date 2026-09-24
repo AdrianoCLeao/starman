@@ -431,27 +431,38 @@ pub(crate) fn parse_material_payload(path: &Path, source: &str) -> Result<Materi
                     });
                 }
             };
+            // Every optional field may be written bare (`alpha_mode:
+            // "BLEND"`) instead of `Some("BLEND")`; wrap those values.
             for key in [
                 "base_color_texture",
                 "metallic_roughness_texture",
                 "normal_texture",
                 "occlusion_texture",
                 "emissive_texture",
+                "emissive_factor",
+                "normal_scale",
+                "occlusion_strength",
+                "alpha_mode",
+                "alpha_cutoff",
+                "double_sided",
             ] {
                 let k = ron::Value::String(key.into());
-                if let Some(ron::Value::String(s)) = map.remove(&k) {
-                    map.insert(k, ron::Value::Option(Some(Box::new(ron::Value::String(s)))));
+                match map.remove(&k) {
+                    Some(ron::Value::Option(inner)) => {
+                        map.insert(k, ron::Value::Option(inner));
+                    }
+                    Some(value) => {
+                        map.insert(k, ron::Value::Option(Some(Box::new(value))));
+                    }
+                    None => {}
                 }
             }
-            let rewritten =
-                ron::to_string(&ron::Value::Map(map)).map_err(|e| EngineError::AssetLoad {
+            ron::Value::Map(map)
+                .into_rust::<RawMaterial>()
+                .map_err(|error| EngineError::AssetLoad {
                     path: path.display().to_string(),
-                    reason: e.to_string(),
-                })?;
-            ron::from_str(&rewritten).map_err(|error| EngineError::AssetLoad {
-                path: path.display().to_string(),
-                reason: format!("failed to parse material: {error}"),
-            })?
+                    reason: format!("failed to parse material: {error}"),
+                })?
         }
     };
 
@@ -510,4 +521,29 @@ pub(crate) fn parse_material_payload(path: &Path, source: &str) -> Result<Materi
     }
 
     Ok(material)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_material_payload;
+    use std::path::Path;
+
+    #[test]
+    fn bare_optional_fields_are_accepted() {
+        let material = parse_material_payload(
+            Path::new("glass.ron"),
+            "(base_color_factor: [0.3, 0.6, 1.0, 0.4], metallic: 0.0, roughness: 0.1, alpha_mode: \"BLEND\", alpha_cutoff: 0.3, double_sided: true, base_color_texture: \"t.png\")",
+        )
+        .expect("bare optional fields parse");
+        assert_eq!(material.alpha_mode, "BLEND");
+        assert_eq!(material.alpha_cutoff, 0.3);
+        assert!(material.double_sided);
+        assert_eq!(material.base_color_texture.as_deref(), Some("t.png"));
+        let wrapped = parse_material_payload(
+            Path::new("m.ron"),
+            "(base_color_factor: [1.0, 1.0, 1.0, 1.0], metallic: 0.0, roughness: 1.0, alpha_mode: Some(\"MASK\"))",
+        )
+        .unwrap();
+        assert_eq!(wrapped.alpha_mode, "MASK");
+    }
 }

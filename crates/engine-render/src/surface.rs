@@ -1,32 +1,5 @@
 use engine_core::{EngineError, Result};
 
-pub(crate) fn create_depth_target(
-    device: &wgpu::Device,
-    width: u32,
-    height: u32,
-) -> crate::DepthTarget {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("engine-render-depth-texture"),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Depth32Float,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-    crate::DepthTarget {
-        _texture: texture,
-        view,
-    }
-}
-
 pub(crate) fn choose_present_mode(
     vsync: bool,
     supported_modes: &[wgpu::PresentMode],

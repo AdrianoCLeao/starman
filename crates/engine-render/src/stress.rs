@@ -85,6 +85,7 @@ pub fn spawn_stress_scene(
             EntityName::new(format!("point-{i}")),
             spatial_at(angle.cos() * radius, 3.0, angle.sin() * radius),
             PointLight {
+                cast_shadows: false,
                 color: [1.0, 0.85, 0.7],
                 intensity: 2.0,
                 range: 12.0,
@@ -99,6 +100,7 @@ pub fn spawn_stress_scene(
             EntityName::new(format!("spot-{i}")),
             spatial_at(angle.cos() * 8.0, 6.0, angle.sin() * 8.0),
             SpotLight {
+                cast_shadows: false,
                 direction: [0.0, -1.0, 0.0],
                 color: [0.6, 0.8, 1.0],
                 intensity: 3.0,

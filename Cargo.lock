@@ -1913,13 +1913,16 @@ name = "engine-render"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "bevy_reflect",
  "blake3",
  "bytemuck",
  "engine-assets",
  "engine-core",
  "engine-math",
  "engine-reflect",
+ "image",
  "log",
+ "naga",
  "pollster 0.3.0",
  "ron",
  "serde",
@@ -1955,6 +1958,7 @@ dependencies = [
  "engine-input",
  "engine-physics",
  "engine-project",
+ "engine-render",
  "log",
 ]
 

@@ -117,6 +117,47 @@ impl AssetLoader for MaterialLoader {
     }
 }
 
+/// High dynamic range image (Radiance `.hdr`), linear RGBA32F.
+#[derive(Clone, Debug)]
+pub struct HdrImageData {
+    pub width: u32,
+    pub height: u32,
+    /// Linear RGBA, row-major, top row first.
+    pub rgba: Vec<f32>,
+}
+
+impl Asset for HdrImageData {
+    const TYPE_NAME: &'static str = "HdrImage";
+}
+
+/// Radiance `.hdr` → [`HdrImageData`] (environment panoramas).
+pub struct HdrImageLoader;
+
+impl AssetLoader for HdrImageLoader {
+    type Asset = HdrImageData;
+
+    fn extensions(&self) -> &'static [&'static str] {
+        &["hdr"]
+    }
+
+    fn load(&self, bytes: &[u8], ctx: &mut LoadContext<'_>) -> Result<HdrImageData> {
+        let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Hdr)
+            .map_err(|error| ctx.error(error.to_string()))?;
+        let (width, height) = image.dimensions();
+        let limit = ctx.hardening.max_texture_dimension;
+        if width > limit || height > limit {
+            return Err(ctx.error(format!(
+                "HDR dimensions {width}x{height} exceed configured limit {limit}"
+            )));
+        }
+        Ok(HdrImageData {
+            width,
+            height,
+            rgba: image.to_rgba32f().into_raw(),
+        })
+    }
+}
+
 /// Installs the shared typed-asset store (unless the host already inserted
 /// the one its `AssetServer` fills) and the built-in loaders.
 #[derive(Default)]
@@ -133,6 +174,7 @@ impl RuntimePlugin for AssetsPlugin {
         assets.register_loader(TextureLoader);
         assets.register_loader(MeshLoader);
         assets.register_loader(MaterialLoader);
+        assets.register_loader(HdrImageLoader);
         runtime.register_type::<crate::AssetRef>();
     }
 }

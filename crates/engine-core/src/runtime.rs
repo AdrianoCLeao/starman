@@ -180,6 +180,7 @@ impl GameRuntime {
             })
             .insert_resource(HardeningConfig::default())
             .insert_resource(GameClock::default())
+            .insert_resource(crate::DebugDraw::default())
             .add_systems(
                 ScheduleKind::PreRender,
                 (propagate_transforms, sync_camera_aspect_from_window)
@@ -319,6 +320,11 @@ impl GameRuntime {
 
         for updater in &self.event_updaters {
             updater(&mut self.world);
+        }
+        // Debug geometry is immediate-mode: whatever the previous frame's
+        // renderer did not consume is dropped.
+        if let Some(mut debug_draw) = self.world.get_resource_mut::<crate::DebugDraw>() {
+            debug_draw.clear();
         }
 
         self.publish_frame_time(delta, real_delta);

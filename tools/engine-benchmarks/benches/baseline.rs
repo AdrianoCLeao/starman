@@ -353,12 +353,16 @@ fn bench_frustum_and_clusters(c: &mut Criterion) {
                 position_range: [i as f32, 1.0, i as f32, 8.0],
                 color_intensity: [1.0, 1.0, 1.0, 1.0],
                 direction_cone: [0.0, -1.0, 0.0, 0.0],
-                light_type: if i == 0 {
-                    GpuLight::TYPE_DIRECTIONAL
-                } else {
-                    GpuLight::TYPE_POINT
-                },
-                _pad: [0; 3],
+                params: [
+                    if i == 0 {
+                        GpuLight::TYPE_DIRECTIONAL
+                    } else {
+                        GpuLight::TYPE_POINT
+                    },
+                    GpuLight::NO_SHADOW,
+                    0,
+                    0,
+                ],
             })
             .collect();
         b.iter(|| cull_lights_cpu(&lights, [0.0; 3], CapabilityTier::Tier1).cluster_count());
