@@ -9,6 +9,7 @@ license.workspace = true
 bevy_ecs.workspace = true
 bevy_reflect.workspace = true
 engine-core = { path = "../engine-core" }
+engine-assets = { path = "../engine-assets" }
 engine-reflect = { path = "../engine-reflect" }
 engine-math = { path = "../engine-math" }
 log.workspace = true

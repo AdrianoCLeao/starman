@@ -1,6 +1,45 @@
 use bevy_ecs::prelude::Resource;
 use engine_core::DEFAULT_FIXED_TIMESTEP_SECONDS;
 use rapier3d::prelude::*;
+use std::sync::Mutex;
+
+/// Collects Rapier collision events during a step.
+#[derive(Default)]
+pub struct PhysicsEventQueue {
+    collisions: Mutex<Vec<CollisionEvent>>,
+}
+
+impl PhysicsEventQueue {
+    /// Takes the events collected since the last drain.
+    pub fn drain(&self) -> Vec<CollisionEvent> {
+        std::mem::take(&mut *self.collisions.lock().unwrap_or_else(|p| p.into_inner()))
+    }
+}
+
+impl EventHandler for PhysicsEventQueue {
+    fn handle_collision_event(
+        &self,
+        _bodies: &RigidBodySet,
+        _colliders: &ColliderSet,
+        event: CollisionEvent,
+        _contact_pair: Option<&ContactPair>,
+    ) {
+        self.collisions
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(event);
+    }
+
+    fn handle_contact_force_event(
+        &self,
+        _dt: Real,
+        _bodies: &RigidBodySet,
+        _colliders: &ColliderSet,
+        _contact_pair: &ContactPair,
+        _total_force_magnitude: Real,
+    ) {
+    }
+}
 
 #[derive(Resource)]
 pub struct PhysicsWorld3D {
@@ -16,7 +55,9 @@ pub struct PhysicsWorld3D {
     pub multibody_joint_set: MultibodyJointSet,
     pub ccd_solver: CCDSolver,
     pub query_pipeline: QueryPipeline,
-    pub event_handler: (),
+    pub events: PhysicsEventQueue,
+    /// Fixed body at the origin that world-anchored joints attach to.
+    world_anchor: Option<RigidBodyHandle>,
 }
 
 impl Default for PhysicsWorld3D {
@@ -49,7 +90,8 @@ impl PhysicsWorld3D {
             multibody_joint_set: MultibodyJointSet::new(),
             ccd_solver: CCDSolver::new(),
             query_pipeline: QueryPipeline::new(),
-            event_handler: (),
+            events: PhysicsEventQueue::default(),
+            world_anchor: None,
         }
     }
 
@@ -74,9 +116,29 @@ impl PhysicsWorld3D {
             &mut self.multibody_joint_set,
             &mut self.ccd_solver,
             Some(&mut self.query_pipeline),
-            &self.event_handler,
-            &self.event_handler,
+            &(),
+            &self.events,
         );
+    }
+
+    /// Refreshes the query acceleration structure without stepping (after
+    /// adding colliders, before the first step).
+    pub fn update_query_pipeline(&mut self) {
+        self.query_pipeline.update(&self.collider_set);
+    }
+
+    /// The shared fixed body joints attach to when they have no target.
+    pub fn world_anchor(&mut self) -> RigidBodyHandle {
+        if let Some(handle) = self.world_anchor {
+            if self.rigid_body_set.contains(handle) {
+                return handle;
+            }
+        }
+        let handle = self
+            .rigid_body_set
+            .insert(RigidBodyBuilder::fixed().build());
+        self.world_anchor = Some(handle);
+        handle
     }
 }
 

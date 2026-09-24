@@ -1861,6 +1861,7 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "bevy_reflect",
+ "engine-assets",
  "engine-core",
  "engine-math",
  "engine-reflect",
@@ -1965,6 +1966,7 @@ dependencies = [
  "engine-assets",
  "engine-core",
  "engine-input",
+ "engine-math",
  "engine-physics",
  "engine-project",
  "engine-render",

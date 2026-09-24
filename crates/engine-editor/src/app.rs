@@ -2434,7 +2434,36 @@ impl EditorApp {
                         }
                     }
                 }
-                ColliderShape3D::Trimesh => {}
+                ColliderShape3D::Cylinder {
+                    half_height,
+                    radius,
+                }
+                | ColliderShape3D::Cone {
+                    half_height,
+                    radius,
+                } => {
+                    let is_cone = matches!(shape, ColliderShape3D::Cone { .. });
+                    for (center, ring_radius) in [
+                        (Vec3::NEG_Y * *half_height, *radius),
+                        (Vec3::Y * *half_height, if is_cone { 0.0 } else { *radius }),
+                    ] {
+                        if ring_radius <= 0.0 {
+                            continue;
+                        }
+                        self.draw_world_space_ring(
+                            ui,
+                            viewport_rect,
+                            view_proj,
+                            global_transform.0,
+                            center,
+                            Vec3::X,
+                            Vec3::Z,
+                            ring_radius,
+                            egui::Color32::from_rgb(140, 220, 140),
+                        );
+                    }
+                }
+                ColliderShape3D::Trimesh | ColliderShape3D::Mesh { .. } => {}
             }
         }
     }

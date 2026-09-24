@@ -78,7 +78,23 @@ pub fn build_runtime(options: &RuntimeOptions) -> GameRuntime {
 /// resources. Safe to call again after the settings change (editor).
 pub fn apply_game_settings(runtime: &mut GameRuntime, settings: &GameSettings) {
     apply_input_settings(runtime, &settings.input);
+    apply_physics_settings(runtime, &settings.physics);
     runtime.insert_resource(ProjectGameSettings(settings.clone()));
+}
+
+fn apply_physics_settings(runtime: &mut GameRuntime, physics: &engine_project::PhysicsSettings) {
+    let world = &mut runtime.world;
+    if let Some(mut physics_world) = world.get_resource_mut::<engine_physics::PhysicsWorld3D>() {
+        let [x, y, z] = physics.gravity;
+        physics_world.gravity = engine_physics::pose::to_vector(engine_math::Vec3::new(x, y, z));
+    }
+    let layers = engine_physics::PhysicsLayers::new(&physics.layers, &physics.collision_matrix);
+    let unchanged = world
+        .get_resource::<engine_physics::PhysicsLayers>()
+        .is_some_and(|current| *current == layers);
+    if !unchanged {
+        world.insert_resource(layers);
+    }
 }
 
 fn apply_input_settings(runtime: &mut GameRuntime, input: &engine_project::InputSettings) {
