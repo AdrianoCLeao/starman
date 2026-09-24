@@ -24,3 +24,4 @@ winit.workspace = true
 
 [dev-dependencies]
 image.workspace = true
+content-gen = { path = "../../tools/content-gen" }

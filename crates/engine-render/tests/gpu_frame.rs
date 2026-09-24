@@ -419,3 +419,112 @@ fn dump_reference_renders() {
         image::save_buffer(&path, &image, 480, 320, image::ColorType::Rgba8).unwrap();
     }
 }
+
+fn skinned_column_glb() -> Vec<u8> {
+    use content_gen::glb::*;
+    // A 0.5 × 2 × 0.5 column: bottom vertices follow joint 0, top joint 1.
+    let mut positions = Vec::new();
+    let mut joints = Vec::new();
+    for y in [0.0f32, 2.0] {
+        for (x, z) in [(-0.25, -0.25), (0.25, -0.25), (0.25, 0.25), (-0.25, 0.25)] {
+            positions.push([x, y, z]);
+            joints.push(if y > 1.0 { [1, 0, 0, 0] } else { [0, 0, 0, 0] });
+        }
+    }
+    let mut indices = Vec::new();
+    for side in 0..4u32 {
+        let (a, b) = (side, (side + 1) % 4);
+        indices.extend([a, b, b + 4, a, b + 4, a + 4]);
+    }
+    indices.extend([4, 5, 6, 4, 6, 7, 0, 2, 1, 0, 3, 2]);
+    let count = positions.len();
+    let mut root = Node::new("root");
+    root.children = vec![1];
+    let mut body = Node::new("Body");
+    body.mesh = Some(0);
+    body.skin = Some(0);
+    let document = Document {
+        nodes: vec![root, body, Node::new("top").at([0.0, 2.0, 0.0])],
+        meshes: vec![Mesh {
+            name: "column".into(),
+            primitives: vec![MeshPrimitive {
+                positions,
+                normals: vec![[0.0, 1.0, 0.0]; count],
+                uvs: vec![[0.0, 0.0]; count],
+                indices,
+                joints,
+                weights: vec![[1.0, 0.0, 0.0, 0.0]; count],
+                material: None,
+            }],
+        }],
+        materials: vec![],
+        skins: vec![Skin {
+            name: "rig".into(),
+            joints: vec![0, 2],
+            inverse_bind_matrices: vec![
+                translation_matrix([0.0; 3]),
+                translation_matrix([0.0, -2.0, 0.0]),
+            ],
+            skeleton: Some(0),
+        }],
+        animations: vec![],
+        roots: vec![0, 2],
+    };
+    write_glb(&document)
+}
+
+#[test]
+fn skinned_meshes_deform_with_their_palette() {
+    use engine_core::SkinPalette;
+    use engine_math::Mat4;
+    let Some(mut frame) = renderer(QualityPreset::Medium) else {
+        eprintln!("skipping GPU test: no adapter");
+        return;
+    };
+    let mut scene = build_scene("skinned");
+    let dir = scene._dir.0.clone();
+    std::fs::write(dir.join("meshes/column.glb"), skinned_column_glb()).unwrap();
+    let mesh = scene.server.load_mesh_handle("meshes/column.glb").unwrap();
+    let texture = scene
+        .server
+        .load_texture_handle("textures/placeholder.png")
+        .unwrap();
+    let material = scene
+        .server
+        .load_material_handle("materials/opaque.ron")
+        .unwrap();
+    let transform = Transform::from_xyz(0.0, -0.8, 4.0);
+    let column = scene
+        .world
+        .spawn((
+            GlobalTransform(transform.to_affine()),
+            transform,
+            MeshRenderable3d::new(mesh, texture, material),
+            Visible,
+            RenderLayer3D,
+            SkinPalette {
+                joint_matrices: vec![Mat4::IDENTITY; 2],
+                bounds: Some((Vec3::new(-1.0, 0.0, -1.0), Vec3::new(1.0, 2.5, 1.0))),
+            },
+        ))
+        .id();
+    let straight = render_frames(&mut frame, &mut scene, 2);
+    assert_eq!(frame.stats().skinned_instances, 1);
+
+    // Bend: the top joint moves 1.2 m to the side.
+    scene
+        .world
+        .get_mut::<SkinPalette>(column)
+        .unwrap()
+        .joint_matrices[1] = Mat4::from_translation(Vec3::new(1.2, 0.0, 0.0));
+    let bent = render_frames(&mut frame, &mut scene, 2);
+    let changed = straight
+        .chunks_exact(4)
+        .zip(bent.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    assert!(
+        changed > 50,
+        "the deformed column covers other pixels: {changed}"
+    );
+}

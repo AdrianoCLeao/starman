@@ -1951,6 +1951,7 @@ dependencies = [
  "bevy_reflect",
  "blake3",
  "bytemuck",
+ "content-gen",
  "engine-assets",
  "engine-core",
  "engine-math",
